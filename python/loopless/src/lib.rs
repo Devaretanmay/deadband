@@ -1,5 +1,6 @@
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
+use pyo3::types::PyList;
 
 use loopless_core::{
     Orchestrator as CoreOrchestrator, ToolCallEvent, Intervention as CoreIntervention,
@@ -143,11 +144,29 @@ struct PyDetectionReport {
     inner: loopless_core::DetectionReport,
 }
 
+/// Strip volatile fields from tool arguments.
+///
+/// Args:
+///     args_json: JSON string of tool arguments.
+///     volatile_fields: List of field names to strip (e.g. ["req_id", "timestamp"]).
+///
+/// Returns:
+///     Cleaned JSON string with volatile fields removed.
+#[pyfunction]
+fn canonicalize_args(args_json: &str, volatile_fields: &Bound<'_, PyList>) -> String {
+    let fields: Vec<String> = volatile_fields
+        .iter()
+        .filter_map(|f| f.extract::<String>().ok())
+        .collect();
+    loopless_core::canonicalize_args(args_json, &fields)
+}
+
 #[pymodule]
 fn loopless(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyOrchestrator>()?;
     m.add_class::<PyIntervention>()?;
     m.add_class::<PyRecoveryMetrics>()?;
     m.add_class::<PyDetectionReport>()?;
+    m.add_function(wrap_pyfunction!(canonicalize_args, m)?)?;
     Ok(())
 }

@@ -229,7 +229,34 @@ LOOPLESS = "What should we do?"
 - [ ] `DetectorPlugin` trait for custom detectors
 - [ ] Unit tests for each detector
 
+**Feature: Auto-Inference of Volatile Fields**
+
+**Description:** Automatically detect high-entropy fields (req_id, timestamp, session_token) that change on every call and exclude them from loop matching.
+
+**Implementation:** Ported from `microloop::canonical`. The `ExactDetector` runs `auto_infer_volatile_fields()` before matching, comparing arguments against history to identify fields that differ in every prior call while the rest remain identical. Fields must differ in at least 2 prior calls to avoid false positives.
+
+**Acceptance Criteria:**
+- [ ] Fields like req_id, timestamp auto-excluded from exact matching
+- [ ] Configuration flag to disable (`with_auto_inference(false)`)
+- [ ] Exposed via Python as `canonicalize_args(args_json, volatile_fields)`
+- [ ] Unit tests for auto-inference logic
+
 **Priority:** P0 (Critical)
+
+**Feature: Shadow Mode for Semantic Sidecar**
+
+**Description:** When the semantic sidecar is unreachable, Loopless gracefully degrades: logs a warning, falls back to exact detection only, and tracks shadow metrics (unavailability count, shadow mode active) so users can measure the impact of running without the sidecar.
+
+**Implementation:** `SemanticSidecarClient` wraps `SidecarShadowMetrics` in a `Mutex` for interior mutability. On sidecar error: `tracing::warn!` logged, `sidecar_unavailable_count` incremented, `Detect()` returns `None` (exact-only fallback). On recovery: `tracing::info!` logged, metrics reset. Exposed via `SemanticDetector.shadow_metrics()` and `is_shadow_mode()`.
+
+**Acceptance Criteria:**
+- [ ] Warning logged when sidecar goes down
+- [ ] Info logged when sidecar recovers
+- [ ] Exact detection continues during shadow mode
+- [ ] Shadow metrics queryable at runtime
+- [ ] No data loss during sidecar outage
+
+**Priority:** P1 (High)
 
 ### 4.3 Feature: Semantic Sidecar
 

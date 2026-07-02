@@ -128,12 +128,28 @@ impl Orchestrator {
         let report = self.pipeline.observe(event.clone(), &history);
         let mut intervention = None;
 
+        // Microloop-backed adaptive thresholding:
+        // When error detections exist, tighten thresholds automatically
+        // to force faster agent pivots (mirrors microloop-proxy behavior)
+        let has_errors = report.detections.iter().any(|d| {
+            matches!(d, loopless_observation::detection::Detection::ErrorPattern { .. })
+        });
+        let effective_threshold = if has_errors && self.config.exact_threshold > 2 {
+            self.config.exact_threshold - 1
+        } else {
+            self.config.exact_threshold
+        };
+
         if !report.detections.is_empty() {
             let context = ExecutionContext {
                 report: &report,
                 history: &history,
                 metrics: &self.metrics,
-                config: &self.config,
+                // Pass effective threshold via config context
+                config: &OrchestratorConfig {
+                    exact_threshold: effective_threshold,
+                    ..self.config.clone()
+                },
                 capabilities,
             };
             if let Some(raw) = self.policy_engine.evaluate(&context) {

@@ -5,6 +5,7 @@ pub mod orchestrator;
 pub mod policy;
 pub mod replay;
 
+pub use loopless_observation::canonicalize_args;
 pub use loopless_observation::detection::{
     BudgetDetector, CompiledRule, Detection, Detector, DetectorBox, ExactDetector,
     HistoryDetector, RuleDetector, SemanticDetector, SemanticSidecarClient,

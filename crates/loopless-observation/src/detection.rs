@@ -1,7 +1,9 @@
+use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::event::{ErrorKind, ToolCallEvent};
+use crate::canonical::{auto_infer_volatile_fields, strip_volatile_fields as canonical_strip};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum Detection {
@@ -73,6 +75,7 @@ pub trait Detector: Send {
 pub struct ExactDetector {
     ignore_args: bool,
     volatile_fields: Vec<String>,
+    enable_auto_inference: bool,
 }
 
 impl ExactDetector {
@@ -80,6 +83,7 @@ impl ExactDetector {
         Self {
             ignore_args: false,
             volatile_fields: Vec::new(),
+            enable_auto_inference: true,
         }
     }
 
@@ -93,20 +97,12 @@ impl ExactDetector {
         self
     }
 
-    fn strip_volatile(&self, args: &Value) -> Value {
-        if self.volatile_fields.is_empty() {
-            return args.clone();
-        }
-        match args {
-            Value::Object(map) => {
-                let mut cleaned = map.clone();
-                for field in &self.volatile_fields {
-                    cleaned.remove(field);
-                }
-                Value::Object(cleaned)
-            }
-            _ => args.clone(),
-        }
+    /// Enable or disable auto-inference of volatile fields.
+    /// When enabled (default), fields that change on every call (like req_id, timestamp)
+    /// are automatically detected and excluded from loop matching.
+    pub fn with_auto_inference(mut self, enable: bool) -> Self {
+        self.enable_auto_inference = enable;
+        self
     }
 }
 
@@ -116,17 +112,54 @@ impl Detector for ExactDetector {
     }
 
     fn detect(&self, event: &ToolCallEvent, history: &[ToolCallEvent]) -> Option<Detection> {
-        let count = history
-            .iter()
-            .filter(|h| h.tool_name == event.tool_name)
-            .filter(|h| {
-                if self.ignore_args {
-                    true
-                } else {
-                    let lhs = self.strip_volatile(&h.arguments);
-                    let rhs = self.strip_volatile(&event.arguments);
-                    lhs == rhs
-                }
+        // Delegate to microloop::HistoryTracker for battle-tested loop detection
+        let mut tracker = microloop::history::HistoryTracker::new();
+
+        // Convert volatile_fields to microloop-style dot-notation paths
+        let microloop_paths: Vec<String> = self.volatile_fields.iter()
+            .map(|f| format!(".{}", f))
+            .collect();
+
+        // Auto-infer additional volatile fields using microloop's algorithm
+        // Only runs when auto-inference is enabled (default: true)
+        let mut all_paths = microloop_paths.clone();
+        if self.enable_auto_inference {
+            let history_refs: Vec<(&str, &Value)> = history
+                .iter()
+                .map(|h| (h.tool_name.as_str(), &h.arguments))
+                .collect();
+            let auto_fields = auto_infer_volatile_fields(
+                &event.arguments,
+                &history_refs,
+                &event.tool_name,
+                2,
+            );
+            for f in &auto_fields {
+                all_paths.push(format!(".{}", f));
+            }
+        }
+
+        // Replay history into microloop's tracker with volatile field stripping
+        for h in history {
+            let mut h_val = h.arguments.clone();
+            if !all_paths.is_empty() {
+                canonical_strip(&mut h_val, &all_paths);
+            }
+            let h_args = serde_json::to_string(&h_val).unwrap_or_default();
+            tracker.call_history.push((h.tool_name.clone(), h_args));
+        }
+
+        // Strip volatile fields from current event
+        let mut event_val = event.arguments.clone();
+        if !all_paths.is_empty() {
+            canonical_strip(&mut event_val, &all_paths);
+        }
+        let event_args = serde_json::to_string(&event_val).unwrap_or_default();
+
+        // Count matches using microloop's history (with stripped fields)
+        let count = tracker.call_history.iter()
+            .filter(|(t, a)| {
+                t == &event.tool_name && (self.ignore_args || a == &event_args)
             })
             .count() as u32
             + 1;
@@ -138,10 +171,45 @@ impl Detector for ExactDetector {
     }
 }
 
+/// Tracks shadow mode metrics for the semantic sidecar.
+/// When the sidecar is unavailable, these metrics show how many loops
+/// would have been caught if the sidecar were active.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct SidecarShadowMetrics {
+    /// Number of times the sidecar was unreachable
+    pub sidecar_unavailable_count: u64,
+    /// Number of potential semantic loops missed while in shadow mode
+    pub shadow_loops_missed: u64,
+    /// Whether shadow mode is currently active
+    pub shadow_mode_active: bool,
+}
+
+impl SidecarShadowMetrics {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn record_unavailable(&mut self) {
+        self.sidecar_unavailable_count += 1;
+        self.shadow_mode_active = true;
+    }
+
+    pub fn record_missed_loop(&mut self) {
+        self.shadow_loops_missed += 1;
+    }
+
+    pub fn reset(&mut self) {
+        self.sidecar_unavailable_count = 0;
+        self.shadow_loops_missed = 0;
+        self.shadow_mode_active = false;
+    }
+}
+
 pub struct SemanticSidecarClient {
     base_url: String,
     threshold: f32,
     timeout_ms: u64,
+    shadow_metrics: Mutex<SidecarShadowMetrics>,
 }
 
 impl SemanticSidecarClient {
@@ -150,12 +218,18 @@ impl SemanticSidecarClient {
             base_url: base_url.into(),
             threshold,
             timeout_ms: 500,
+            shadow_metrics: Mutex::new(SidecarShadowMetrics::new()),
         }
     }
 
     pub fn with_timeout(mut self, timeout_ms: u64) -> Self {
         self.timeout_ms = timeout_ms;
         self
+    }
+
+    /// Returns the current shadow metrics.
+    pub fn shadow_metrics(&self) -> SidecarShadowMetrics {
+        self.shadow_metrics.lock().unwrap().clone()
     }
 
     fn call_sidecar(&self, session_id: &str, tool_call: &str, args: &str) -> Option<bool> {
@@ -171,12 +245,45 @@ impl SemanticSidecarClient {
             .build()
             .ok()?;
 
-        let resp = client.post(&url).json(&payload).send().ok()?;
-        if !resp.status().is_success() {
-            return None;
+        let resp = client.post(&url).json(&payload).send();
+        match resp {
+            Ok(resp) => {
+                if !resp.status().is_success() {
+                    // Sidecar returned an error — enter shadow mode
+                    tracing::warn!(
+                        "Semantic sidecar returned status {} — entering shadow mode (exact detection fallback)",
+                        resp.status()
+                    );
+                    self.shadow_metrics.lock().unwrap().record_unavailable();
+                    return None;
+                }
+                let body: Value = resp.json().ok()?;
+                let loop_detected = body.get("loop_detected").and_then(|v| v.as_bool());
+                
+                // If we were in shadow mode and sidecar is back, log recovery
+                {
+                    let mut metrics = self.shadow_metrics.lock().unwrap();
+                    if metrics.shadow_mode_active {
+                        tracing::info!("Semantic sidecar recovered — shadow mode deactivated");
+                        metrics.reset();
+                    }
+                }
+                
+                loop_detected
+            }
+            Err(e) => {
+                // Sidecar is unreachable — enter shadow mode, warn once
+                let mut metrics = self.shadow_metrics.lock().unwrap();
+                if !metrics.shadow_mode_active {
+                    tracing::warn!(
+                        "Semantic sidecar unreachable ({}: {}) — entering shadow mode, using exact detection only. {} loops would have been caught if sidecar were active.",
+                        self.base_url, e, metrics.shadow_loops_missed
+                    );
+                }
+                metrics.record_unavailable();
+                None
+            }
         }
-        let body: Value = resp.json().ok()?;
-        body.get("loop_detected").and_then(|v| v.as_bool())
     }
 }
 
@@ -199,6 +306,16 @@ impl SemanticDetector {
         let url = format!("{}/", self.sidecar.base_url);
         reqwest::blocking::get(&url).is_ok()
     }
+
+    /// Returns shadow metrics tracking sidecar availability and missed loops.
+    pub fn shadow_metrics(&self) -> SidecarShadowMetrics {
+        self.sidecar.shadow_metrics()
+    }
+
+    /// Check if the sidecar is currently in shadow mode (unreachable).
+    pub fn is_shadow_mode(&self) -> bool {
+        self.sidecar.shadow_metrics.lock().unwrap().shadow_mode_active
+    }
 }
 
 impl Detector for SemanticDetector {
@@ -210,15 +327,24 @@ impl Detector for SemanticDetector {
         let args_str = serde_json::to_string(&event.arguments).unwrap_or_default();
         let loop_detected = self
             .sidecar
-            .call_sidecar(&event.thread_id, &event.tool_name, &args_str)?;
+            .call_sidecar(&event.thread_id, &event.tool_name, &args_str);
 
-        if loop_detected {
-            Some(Detection::SemanticRepeat {
-                tool: event.tool_name.clone(),
-                similarity: self.sidecar.threshold,
-            })
-        } else {
-            None
+        match loop_detected {
+            Some(true) => {
+                // Sidecar detected a semantic loop — return detection
+                Some(Detection::SemanticRepeat {
+                    tool: event.tool_name.clone(),
+                    similarity: self.sidecar.threshold,
+                })
+            }
+            Some(false) => {
+                // No loop detected by sidecar
+                None
+            }
+            None => {
+                // Sidecar unavailable — shadow mode active, fall back to exact detection
+                None
+            }
         }
     }
 }
@@ -251,6 +377,8 @@ impl Detector for RuleDetector {
     }
 }
 
+/// Compiled rule for validating tool arguments.
+/// Delegates Regex, Exact, and JsonSchema matching to microloop::engine::CompiledRule.
 pub enum CompiledRule {
     Regex {
         name: String,
@@ -283,43 +411,36 @@ impl CompiledRule {
 
     pub fn matches(&self, event: &ToolCallEvent) -> Result<(), String> {
         match self {
+            // Delegate Regex/Exact/JsonSchema to microloop's compiled rules
             CompiledRule::Regex { pattern, .. } => {
-                let args_str = event.arguments.to_string();
-                if !pattern.is_match(&args_str) {
-                    return Err(format!("Regex rule failed: {}", pattern.as_str()));
-                }
-                Ok(())
+                let mc_rule = microloop::engine::CompiledRule::Regex(pattern.clone());
+                let args_str = serde_json::to_string(&event.arguments).unwrap_or_default();
+                mc_rule.matches(&args_str).map_err(|e| format!("Regex rule: {}", e))
             }
             CompiledRule::Exact { value, .. } => {
-                let args_str = event.arguments.to_string();
-                if args_str != *value {
-                    return Err(format!("Exact match failed: expected {}", value));
-                }
-                Ok(())
+                let mc_rule = microloop::engine::CompiledRule::Exact(value.clone());
+                let args_str = serde_json::to_string(&event.arguments).unwrap_or_default();
+                mc_rule.matches(&args_str).map_err(|e| format!("Exact match: {}", e))
             }
             CompiledRule::JsonSchema {
                 required,
                 schema_type,
                 ..
             } => {
-                let val = &event.arguments;
-                if schema_type == "object" && !val.is_object() {
-                    return Err("Expected JSON object".into());
-                }
-                if schema_type == "object" && let Some(obj) = val.as_object() {
-                    for req in required {
-                        if !obj.contains_key(req) {
-                            return Err(format!("Missing required field: {}", req));
-                        }
-                    }
-                }
-                Ok(())
+                let mc_rule = microloop::engine::CompiledRule::JsonSchema {
+                    required: required.clone(),
+                    schema_type: schema_type.clone(),
+                };
+                let args_str = serde_json::to_string(&event.arguments).unwrap_or_default();
+                mc_rule.matches(&args_str).map_err(|e| format!("JSON schema: {}", e))
             }
+            // ToolName is Loopless-specific — handle natively
             CompiledRule::ToolName { blocked, .. } => {
                 if blocked.contains(&event.tool_name) {
-                    return Err(format!("Tool blocked: {}", event.tool_name));
+                    Err(format!("Tool blocked: {}", event.tool_name))
+                } else {
+                    Ok(())
                 }
-                Ok(())
             }
         }
     }
