@@ -1,0 +1,10 @@
+[package]
+name = "loopless-adapter-crewai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Loopless integration adapter for CrewAI"
+
+[dependencies]
+loopless-core = { path = "../loopless-core" }
+serde_json.workspace = true

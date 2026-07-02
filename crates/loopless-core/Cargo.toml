@@ -1,0 +1,23 @@
+[package]
+name = "loopless-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core orchestrator, policy engine, intervention, and replay for Loopless"
+
+[dependencies]
+loopless-observation = { path = "../loopless-observation" }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+reqwest.workspace = true
+anyhow.workspace = true
+regex = "1"
+
+[dev-dependencies]
+tempfile = "3"

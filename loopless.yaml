@@ -1,0 +1,54 @@
+policies:
+  - name: "hard_fork_on_repeats"
+    when:
+      type: "RepeatCount"
+      params:
+        threshold: 3
+    do:
+      type: "InjectPrompt"
+      params:
+        content: "You've tried this tool 3 times. Try a different approach."
+        position: "ReplaceLast"
+
+  - name: "retry_timeout"
+    when:
+      type: "ErrorType"
+      params:
+        kind: "Timeout"
+        threshold: 1
+    do:
+      type: "Retry"
+      params:
+        delay_ms: 100
+
+  - name: "semantic_nudge"
+    when:
+      type: "SemanticDrift"
+      params:
+        threshold: 0.85
+    do:
+      type: "InjectPrompt"
+      params:
+        content: "You're trying similar approaches. Consider a different strategy."
+        position: "BeforeNext"
+
+  - name: "abort_on_budget"
+    when:
+      type: "RepeatCount"
+      params:
+        threshold: 10
+    do:
+      type: "Abort"
+      params:
+        reason: "Execution exceeded maximum repeat threshold of 10"
+
+  - name: "backoff_on_rate_limit"
+    when:
+      type: "ErrorType"
+      params:
+        kind: "RateLimit"
+        threshold: 1
+    do:
+      type: "Backoff"
+      params:
+        base_ms: 500

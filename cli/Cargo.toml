@@ -1,0 +1,18 @@
+[package]
+name = "loopless-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Loopless CLI — doctor, trace, replay, inspect"
+
+[[bin]]
+name = "loopless"
+path = "src/main.rs"
+
+[dependencies]
+loopless-core = { path = "../crates/loopless-core" }
+clap = { version = "4", features = ["derive"] }
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+reqwest = { version = "0.12", features = ["blocking"] }

@@ -1,0 +1,10 @@
+[package]
+name = "loopless-adapter-openai"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Loopless integration adapter for OpenAI Agents SDK"
+
+[dependencies]
+loopless-core = { path = "../loopless-core" }
+serde_json.workspace = true
