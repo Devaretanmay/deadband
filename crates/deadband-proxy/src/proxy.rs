@@ -317,10 +317,26 @@ async fn handle_non_streaming_response(
 async fn handle_streaming_response(
     resp: reqwest::Response,
     status: reqwest::StatusCode,
-    _headers: reqwest::header::HeaderMap,
+    upstream_headers: reqwest::header::HeaderMap,
     state: Arc<ProxyState>,
 ) -> Result<hyper::Response<BoxedBody>, std::convert::Infallible> {
     let mut builder = hyper::Response::builder().status(status.as_u16());
+    // Forward upstream response headers so the client receives accurate
+    // content-type, caching headers, and other metadata.
+    for (key, value) in upstream_headers.iter() {
+        let key_str = key.as_str();
+        // Skip hop-by-hop headers that hyper will set for us
+        if key_str == "transfer-encoding"
+            || key_str == "connection"
+            || key_str == "content-length"
+        {
+            continue;
+        }
+        if let Ok(val) = value.to_str() {
+            builder = builder.header(key_str, val);
+        }
+    }
+    // Ensure content-type is text/event-stream for SSE
     builder = builder.header("content-type", "text/event-stream");
     builder = builder.header("cache-control", "no-cache");
 

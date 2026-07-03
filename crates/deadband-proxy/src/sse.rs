@@ -52,17 +52,27 @@ impl SseProcessor {
     ) -> Option<Bytes> {
         match self.state {
             ProcessorState::Buffering => {
-                if self.buffer.len() < self.buffer_size {
-                    self.buffer.push_back(chunk);
-                    if self.buffer.len() >= self.buffer_size {
-                        self.state = ProcessorState::Analyzing;
-                        return self.analyze(orchestrator, thread_id);
-                    }
-                    None
-                } else {
+                // Forward the chunk immediately so the client doesn't stall,
+                // but also buffer it for analysis.
+                self.buffer.push_back(chunk.clone());
+                if self.buffer.len() >= self.buffer_size {
+                    // Buffer is full — analyze for tool calls
                     self.state = ProcessorState::Analyzing;
-                    self.analyze(orchestrator, thread_id)
+                    self.analyze(orchestrator, thread_id);
+
+                    if !self.injection_frames.is_empty() {
+                        // Intervention found — replay buffer with injection frames
+                        let total = self.buffer.len();
+                        let first = self.buffer[0].clone();
+                        self.state = ProcessorState::Replaying { index: 1, total };
+                        return Some(first);
+                    }
+
+                    // No intervention — skip straight to streaming
+                    self.state = ProcessorState::Streaming;
                 }
+                // Always forward the chunk to the client immediately
+                Some(chunk)
             }
             ProcessorState::Analyzing => {
                 self.state = ProcessorState::Streaming;
@@ -223,7 +233,17 @@ impl SseProcessor {
                     return None;
                 }
                 self.state = ProcessorState::Analyzing;
-                self.analyze(orchestrator, thread_id)
+                self.analyze(orchestrator, thread_id);
+                // Chunks were already forwarded during buffering, so only
+                // replay if there's an intervention with injection frames.
+                if !self.injection_frames.is_empty() {
+                    let total = self.buffer.len();
+                    let first = self.buffer[0].clone();
+                    self.state = ProcessorState::Replaying { index: 1, total };
+                    return Some(first);
+                }
+                self.state = ProcessorState::Done;
+                None
             }
             ProcessorState::Replaying { index, total } => {
                 if index < total {
@@ -280,26 +300,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_buffer_initial_chunks() {
+    fn test_buffer_initial_chunks_forwarded_immediately() {
         let mut proc = SseProcessor::new(5);
         assert_eq!(proc.state(), &ProcessorState::Buffering);
 
         let chunk = Bytes::from("data: {\"choices\": [{\"delta\": {}}]}\n\n");
+        // Chunks are now forwarded immediately even during buffering
         let result = proc.push_chunk(chunk, None, "test");
-        assert!(result.is_none());
+        assert!(result.is_some());
         assert_eq!(proc.state(), &ProcessorState::Buffering);
     }
 
     #[test]
-    fn test_buffer_full_triggers_analysis() {
+    fn test_buffer_full_triggers_streaming() {
         let mut proc = SseProcessor::new(2);
         let chunk = Bytes::from("data: {}\n\n");
 
-        assert!(proc.push_chunk(chunk.clone(), None, "test").is_none());
-
+        // Both chunks forwarded immediately
+        assert!(proc.push_chunk(chunk.clone(), None, "test").is_some());
         let result = proc.push_chunk(chunk.clone(), None, "test");
         assert!(result.is_some());
-        assert_eq!(result.unwrap(), chunk);
+        assert_eq!(proc.state(), &ProcessorState::Streaming);
     }
 
     #[test]
@@ -321,7 +342,8 @@ mod tests {
         let chunk = Bytes::from(sse);
         let result = proc.push_chunk(chunk, None, "test");
         assert!(result.is_some());
-        let text = String::from_utf8_lossy(&result.unwrap());
+        let result_bytes = result.unwrap();
+        let text = String::from_utf8_lossy(&result_bytes);
         assert!(text.starts_with("data: "));
     }
 
@@ -334,8 +356,9 @@ mod tests {
         let chunk = Bytes::from("data: {}\n\n");
         let result = proc.push_chunk(chunk, None, "test");
         assert!(result.is_some());
+        let r = result.unwrap();
         assert_eq!(
-            String::from_utf8_lossy(&result.unwrap()),
+            String::from_utf8_lossy(&r),
             "data: test intervention\n\n"
         );
         assert_eq!(proc.state(), &ProcessorState::Streaming);
