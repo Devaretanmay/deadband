@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+
 mod dashboard;
 
 use deadband_core::{Orchestrator, Replayer, VitalSigns};
@@ -254,7 +254,7 @@ fn cmd_dashboard(config: &PathBuf, snapshot: bool) -> Result<(), anyhow::Error> 
 }
 
 fn cmd_init(output: &PathBuf) -> Result<(), anyhow::Error> {
-    let default_config = include_str!("../../deadband.yaml");
+    let default_config = include_str!("../deadband.yaml");
     if output.exists() {
         eprintln!("{} already exists — not overwriting", output.display());
         std::process::exit(1);
