@@ -102,8 +102,7 @@ async fn cmd_enable(persistent: bool, port: u16, config: PathBuf) -> Result<(), 
     println!(" Deadband Proxy — Enable");
     println!("============================");
 
-    // Discover and configure tools
-    let data_dir = ProxyConfig::data_dir();
+    let _data_dir = ProxyConfig::data_dir();
     let backups_dir = ProxyConfig::backups_dir();
     let discovery = ToolDiscovery::new(port, backups_dir);
 
@@ -321,9 +320,8 @@ async fn cmd_proxy(port: u16, config: PathBuf, daemon: bool) -> Result<(), anyho
         // Redirect output to log file
         let log_dir = ProxyConfig::log_dir();
         tokio::fs::create_dir_all(&log_dir).await?;
-        let log_file = ProxyConfig::log_file();
+        let _log_file = ProxyConfig::log_file();
 
-        // In daemon mode, we just run quietly
         tracing::info!("Starting Deadband Proxy daemon on port {}", port);
     }
 

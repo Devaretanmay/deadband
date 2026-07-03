@@ -23,7 +23,6 @@ let cleaned = canonicalize_args(
     r#"{"query": "hello", "req_id": 123}"#,
     &["req_id".to_string()],
 );
-// Returns: r#"{"query":"hello"}"#
 ```
 
 ### Python

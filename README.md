@@ -72,10 +72,10 @@ print(f"Cleaned args: {cleaned}")  # {"query":"hello"}
 
 ## Key Features
 
-### ⚡ Microloop-Powered Detection
+###  Microloop-Powered Detection
 Deadband imports [Microloop](https://github.com/Devaretanmay/microloop) as its detection backend. The `ExactDetector` delegates to `microloop::HistoryTracker` for **460ns** loop detection, and `RuleDetector` delegates Regex/Exact/JsonSchema matching to `microloop::engine::CompiledRule`.
 
-### 🧠 Auto-Inference of Volatile Fields
+###  Auto-Inference of Volatile Fields
 Fields like `req_id`, `timestamp`, or `session_token` that change on every call can fool naive detectors. Deadband's `ExactDetector` automatically detects these high-entropy fields and excludes them from comparison — catching loops that would otherwise slip through.
 
 ```python
@@ -85,10 +85,10 @@ cleaned = canonicalize_args('{"query": "python", "req_id": 42}', ["req_id"])
 # Returns: {"query":"python"}
 ```
 
-### 📡 Semantic Detection (Optional Sidecar)
+###  Semantic Detection (Optional Sidecar)
 An optional sidecar server (`microloop-semantic`) provides intent-based loop detection using BERT embeddings. When the sidecar is unreachable, Deadband enters **shadow mode** — logging warnings, falling back to exact-only detection, and tracking metrics so you know what you're missing.
 
-### 📋 Policy Engine
+###  Policy Engine
 Define loop intervention rules in a YAML file — no recompilation needed:
 
 ```yaml
@@ -122,10 +122,10 @@ policies:
         reason: "Execution exceeded maximum repeat threshold of 10"
 ```
 
-### 🔄 Adaptive Thresholding
+###  Adaptive Thresholding
 When error patterns are detected, Deadband automatically tightens the repeat threshold (e.g., 3 → 2), forcing agents to pivot faster when they're stuck in a failing pattern. This mirrors Microloop's proxy behavior.
 
-### 📊 Trace & Replay
+###  Trace & Replay
 Every execution can be saved as a versioned JSON trace for later debugging:
 
 ```bash

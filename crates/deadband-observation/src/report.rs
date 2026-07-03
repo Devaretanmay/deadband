@@ -5,8 +5,6 @@ use uuid::Uuid;
 use crate::detection::Detection;
 use crate::event::ToolCallEvent;
 
-/// A SHA-256 fingerprint of the trajectory leading to a loop detection.
-/// This allows users to look up past occurrences and see what intervention worked.
 pub type LoopFingerprintHash = String;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Default)]

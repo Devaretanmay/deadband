@@ -3,7 +3,9 @@ name = "deadband-observation"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Observation pipeline, events, and detectors for Loopless"
+repository = "https://github.com/Devaretanmay/deadband"
+homepage = "https://github.com/Devaretanmay/deadband"
+description = "Observation pipeline, events, and detectors for Deadband"
 
 [dependencies]
 serde.workspace = true

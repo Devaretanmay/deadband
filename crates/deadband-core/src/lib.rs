@@ -16,8 +16,6 @@ pub use deadband_observation::pipeline::{ObservationPipeline, PipelineConfig};
 pub use deadband_observation::report::{DetectionReport, ObservationMetadata};
 pub use deadband_observation::history::{HistoryStore, InMemoryHistoryStore};
 
-/// Canonicalize tool arguments by stripping volatile fields.
-/// Returns the cleaned JSON string.
 pub fn canonicalize_args(args_json: &str, volatile_fields: &[String]) -> String {
     deadband_observation::canonicalize_args(args_json, volatile_fields)
 }

@@ -6,9 +6,6 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-/// A fingerprint of a detected loop trajectory.
-/// Users can query the database to see if they've encountered this
-/// loop before, and what intervention worked.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LoopFingerprint {
     /// SHA-256 hash of the canonical trajectory (sorted tool+args pairs)
@@ -29,8 +26,6 @@ pub struct LoopFingerprint {
     pub execution_ids: Vec<Uuid>,
 }
 
-/// Persistent store for loop fingerprints, backed by SQLite.
-/// Automatically creates the database file on first use.
 pub struct FingerprintStore {
     conn: Connection,
     db_path: PathBuf,

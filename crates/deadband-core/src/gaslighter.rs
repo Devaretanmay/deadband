@@ -4,8 +4,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Tracks which gaslight prompt was used and whether the agent recovered.
-/// Over time, the Gaslighter learns which prompts work best for which scenarios.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GaslighterTrial {
     /// Unique ID for this trial
@@ -28,7 +26,6 @@ pub struct GaslighterTrial {
     pub assessed_at_step: Option<u64>,
 }
 
-/// Aggregated statistics for a particular prompt.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PromptStats {
     /// The prompt ID
@@ -45,12 +42,6 @@ pub struct PromptStats {
     pub detection_kinds: Vec<String>,
 }
 
-/// Gaslighter tracks prompt injection effectiveness for A/B testing.
-///
-/// When a prompt is injected, the Gaslighter records the trial. It then
-/// monitors the next N steps to determine if the agent recovered. Over
-/// time, this data helps identify which prompts work best for which
-/// loop detection scenarios.
 pub struct Gaslighter {
     /// All trials (completed + pending)
     trials: Vec<GaslighterTrial>,

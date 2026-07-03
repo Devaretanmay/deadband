@@ -52,7 +52,6 @@ policies:
 "#
 }
 
-/// Simulate a tool call and return the intervention
 fn call_tool(
     orch: &mut Orchestrator,
     tool: &str,

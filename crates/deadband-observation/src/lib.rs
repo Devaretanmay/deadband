@@ -12,9 +12,6 @@ pub use history::HistoryStore;
 pub use pipeline::ObservationPipeline;
 pub use report::DetectionReport;
 
-/// Canonicalize tool arguments by stripping volatile fields.
-/// Returns the cleaned JSON string.
-/// This is exposed to Python via PyO3 for users to preview what gets stripped.
 pub fn canonicalize_args(args_json: &str, volatile_fields: &[String]) -> String {
     let mut val: serde_json::Value = serde_json::from_str(args_json).unwrap_or(serde_json::Value::Null);
     let paths: Vec<String> = volatile_fields.iter()

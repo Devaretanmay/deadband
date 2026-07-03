@@ -19,7 +19,6 @@ use deadband_core::Orchestrator;
 let orch = Orchestrator::from_yaml(yaml).unwrap();
 let mut middleware = LooplessLangGraphMiddleware::new(orch);
 
-// Intercept a tool call before it reaches the LLM
 if let Some(intervention) = middleware.wrap_tool_call(
     "search",
     r#"{"q": "hello"}"#,
@@ -42,7 +41,7 @@ if let Some(intervention) = middleware.wrap_tool_call(
 
 | Capability | Supported |
 |------------|-----------|
-| Retry | ✅ |
-| Abort | ✅ |
+| Retry |  |
+| Abort |  |
 | InjectPrompt | ❌ (downgraded to Abort) |
 | ReplaceTool | ❌ (downgraded to Abort) |

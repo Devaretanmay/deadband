@@ -144,14 +144,6 @@ struct PyDetectionReport {
     inner: deadband_core::DetectionReport,
 }
 
-/// Strip volatile fields from tool arguments.
-///
-/// Args:
-///     args_json: JSON string of tool arguments.
-///     volatile_fields: List of field names to strip (e.g. ["req_id", "timestamp"]).
-///
-/// Returns:
-///     Cleaned JSON string with volatile fields removed.
 #[pyfunction]
 fn canonicalize_args(args_json: &str, volatile_fields: &Bound<'_, PyList>) -> String {
     let fields: Vec<String> = volatile_fields

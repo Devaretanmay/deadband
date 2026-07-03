@@ -8,6 +8,7 @@ use hyper::body::Frame;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
 use std::sync::Mutex;
+use tokio_stream::wrappers::ReceiverStream;
 
 use deadband_core::{Orchestrator, OrchestratorConfig};
 
@@ -316,7 +317,7 @@ async fn handle_non_streaming_response(
 async fn handle_streaming_response(
     resp: reqwest::Response,
     status: reqwest::StatusCode,
-    headers: reqwest::header::HeaderMap,
+    _headers: reqwest::header::HeaderMap,
     state: Arc<ProxyState>,
 ) -> Result<hyper::Response<BoxedBody>, std::convert::Infallible> {
     let mut builder = hyper::Response::builder().status(status.as_u16());
@@ -324,34 +325,58 @@ async fn handle_streaming_response(
     builder = builder.header("cache-control", "no-cache");
 
     let mut sse_proc = SseProcessor::new(state.config.sse_buffer_size);
-    let stream = resp.bytes_stream();
     let state_clone = state.clone();
-    let mut has_intervened = false;
 
-    let body_stream = stream.map(move |chunk_result| {
-        match chunk_result {
-            Ok(chunk) => {
-                let mut orch = state_clone.orchestrator.lock().unwrap();
-                let result = sse_proc.push_chunk(chunk, Some(&mut orch), "proxy");
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Frame<Bytes>, std::convert::Infallible>>(64);
 
-                if sse_proc.has_intervention() && !has_intervened {
-                    has_intervened = true;
-                    state_clone.update_stats(1, 1, 1);
-                    tracing::info!("Streaming intervention applied");
+    tokio::spawn(async move {
+        let mut stream = resp.bytes_stream();
+        let mut has_intervened = false;
+
+        while let Some(chunk_result) = stream.next().await {
+            let data = match chunk_result {
+                Ok(chunk) => {
+                    let mut orch = state_clone.orchestrator.lock().unwrap();
+                    let result = sse_proc.push_chunk(chunk, Some(&mut orch), "proxy");
+
+                    if sse_proc.has_intervention() && !has_intervened {
+                        has_intervened = true;
+                        state_clone.update_stats(1, 1, 1);
+                        tracing::info!("Streaming intervention applied");
+                    }
+
+                    result
                 }
+                Err(_) => None,
+            };
 
-                match result {
-                    Some(modified_chunk) => Ok(Frame::data(modified_chunk)),
-                    None => Ok(Frame::data(Bytes::new())),
+            if let Some(data) = data {
+                if tx.send(Ok(Frame::data(data))).await.is_err() {
+                    break;
                 }
             }
-            Err(_e) => {
-                // Stream error - end the stream gracefully
-                Ok(Frame::data(Bytes::new()))
+        }
+
+        // Flush remaining buffered chunks when upstream stream ends
+        let flush_data: Vec<Bytes> = {
+            let mut orch = state_clone.orchestrator.lock().unwrap();
+            let mut data = Vec::new();
+            while let Some(chunk) = sse_proc.flush(Some(&mut orch), "proxy") {
+                data.push(chunk);
+            }
+            data
+        };
+
+        for data in flush_data {
+            if tx.send(Ok(Frame::data(data))).await.is_err() {
+                break;
             }
         }
     });
 
-    let body: BoxedBody = BodyExt::boxed(StreamBody::new(body_stream));
+    let rx_stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+    let body: BoxedBody = BodyExt::boxed(StreamBody::new(rx_stream));
+
+    tracing::debug!("returning streaming response");
     Ok(builder.body(body).unwrap())
 }

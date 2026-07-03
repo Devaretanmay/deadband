@@ -18,8 +18,6 @@ use ratatui::{
 
 use deadband_core::VitalSigns;
 
-/// Run the interactive dashboard with the given vital signs data source.
-/// The `data_fn` is called once per tick to get the latest metrics.
 pub fn run_dashboard<F>(data_fn: F) -> Result<(), Box<dyn std::error::Error>>
 where
     F: Fn() -> VitalSigns,
@@ -257,7 +255,6 @@ where
     }
 }
 
-/// Non-interactive mode: print a one-shot snapshot of vital signs.
 pub fn print_snapshot(vs: &VitalSigns) {
     println!("╔══════════════════════════════════════╗");
     println!("║     Loopless Agent Vital Signs       ║");

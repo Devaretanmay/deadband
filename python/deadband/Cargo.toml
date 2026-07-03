@@ -3,7 +3,9 @@ name = "deadband-python"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Python bindings for Loopless — Rust-powered agent execution runtime"
+repository = "https://github.com/Devaretanmay/deadband"
+homepage = "https://github.com/Devaretanmay/deadband"
+description = "Python bindings for Deadband — Rust-powered agent execution runtime"
 
 [lib]
 name = "deadband"

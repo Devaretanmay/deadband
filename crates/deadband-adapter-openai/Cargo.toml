@@ -3,7 +3,9 @@ name = "deadband-adapter-openai"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Loopless integration adapter for OpenAI Agents SDK"
+repository = "https://github.com/Devaretanmay/deadband"
+homepage = "https://github.com/Devaretanmay/deadband"
+description = "Deadband integration adapter for OpenAI Agents SDK"
 
 [dependencies]
 deadband-core = { path = "../deadband-core" }

@@ -171,9 +171,6 @@ impl Detector for ExactDetector {
     }
 }
 
-/// Tracks shadow mode metrics for the semantic sidecar.
-/// When the sidecar is unavailable, these metrics show how many loops
-/// would have been caught if the sidecar were active.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SidecarShadowMetrics {
     /// Number of times the sidecar was unreachable
@@ -377,8 +374,6 @@ impl Detector for RuleDetector {
     }
 }
 
-/// Compiled rule for validating tool arguments.
-/// Delegates Regex, Exact, and JsonSchema matching to microloop::engine::CompiledRule.
 pub enum CompiledRule {
     Regex {
         name: String,

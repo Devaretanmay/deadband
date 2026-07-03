@@ -2,8 +2,6 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-/// Strip volatile fields from a JSON value using dot-notation paths.
-/// This mirrors microloop::canonical::strip_volatile_fields().
 pub fn strip_volatile_fields(value: &mut Value, paths: &[String]) {
     for path_str in paths {
         let segments = parse_json_path(path_str);
@@ -38,11 +36,6 @@ fn parse_json_path(path: &str) -> Vec<String> {
     s.split('.').map(|p| p.to_string()).collect()
 }
 
-/// Auto-infer volatile fields by analyzing history for fields that change
-/// on every call while the rest of the arguments stay the same.
-///
-/// Returns a set of field names that appear to be volatile (high-entropy).
-/// This is the core of microloop's auto-inference algorithm.
 pub fn auto_infer_volatile_fields(
     current_args: &Value,
     history: &[(&str, &Value)],  // (tool_name, arguments) pairs from history

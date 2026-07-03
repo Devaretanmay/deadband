@@ -1,5 +1,5 @@
 """
-Loopless — execution runtime for AI agents.
+Deadband — execution runtime for AI agents.
 
 Detects agent loops, intervenes intelligently, and recovers execution.
 
@@ -19,7 +19,7 @@ from typing import Optional
 
 
 class Orchestrator:
-    """Loopless orchestrator — detects loops and intervenes in agent tool calls."""
+    """Deadband orchestrator — detects loops and intervenes in agent tool calls."""
 
     def __init__(self, config_path: str):
         with open(config_path) as f:

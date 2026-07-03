@@ -20,7 +20,6 @@ use deadband_core::Orchestrator;
 let orch = Orchestrator::from_yaml(yaml).unwrap();
 let mut flow = LooplessCrewAIFlow::new(orch);
 
-// Intercept before each tool call
 if let Some(intervention) = flow.intercept_tool_call(
     "search",
     r#"{"q": "hello"}"#,
@@ -34,7 +33,7 @@ if let Some(intervention) = flow.intercept_tool_call(
 
 | Capability | Supported |
 |------------|-----------|
-| Retry | ✅ |
-| Abort | ✅ (resets step counter) |
+| Retry |  |
+| Abort |  (resets step counter) |
 | InjectPrompt | ❌ |
 | ReplaceTool | ❌ |

@@ -3,7 +3,9 @@ name = "deadband-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Loopless CLI — doctor, trace, replay, inspect"
+repository = "https://github.com/Devaretanmay/deadband"
+homepage = "https://github.com/Devaretanmay/deadband"
+description = "Deadband CLI — doctor, trace, replay, inspect"
 
 [[bin]]
 name = "deadband-legacy"

@@ -201,8 +201,6 @@ impl Default for RecoveryMetrics {
     }
 }
 
-/// Real-time vital signs for the Agent Vital Signs CLI dashboard.
-/// Captures aggregate metrics across the entire execution session.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct VitalSigns {
     /// Total number of loops detected
