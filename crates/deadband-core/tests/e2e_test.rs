@@ -88,13 +88,13 @@ fn e2e_exact_repeat_detection_and_abort() {
 
     let args = serde_json::json!({"query": "SELECT * FROM users"});
 
-    // Call 1: first time, no loop
+
     assert!(call_tool(&mut orch, "query_db", args.clone(), 0).is_none());
 
-    // Call 2: second time, no loop yet (threshold in policy is 3)
+
     assert!(call_tool(&mut orch, "query_db", args.clone(), 1).is_none());
 
-    // Call 3: this should trigger ExactRepeat → Abort
+
     let intervention = call_tool(&mut orch, "query_db", args.clone(), 2);
     assert!(intervention.is_some(), "Should abort on 3rd exact repeat");
 
@@ -109,7 +109,7 @@ fn e2e_semantic_loop_detection_with_different_tools() {
 
     let config = OrchestratorConfig {
         enable_semantic: true,
-        exact_threshold: 5, // High threshold so exact doesn't fire
+        exact_threshold: 5,
         ..Default::default()
     };
 
@@ -120,14 +120,14 @@ fn e2e_semantic_loop_detection_with_different_tools() {
 
     let args = serde_json::json!({"line": 42});
 
-    // Different tool names but semantically same intent
-    // First call passes through
+
+
     assert!(call_tool(&mut orch, "delete_line", args.clone(), 0).is_none());
 
-    // Enable loop detection for second call
+
     trigger.store(true, Ordering::SeqCst);
 
-    // Second call: semantically similar → semantic detector fires
+
     let intervention = call_tool(&mut orch, "remove_line", args.clone(), 1);
     assert!(intervention.is_some(), "Should detect semantic loop");
     assert!(intervention.unwrap().is_abort());
@@ -148,7 +148,7 @@ fn e2e_metrics_after_intervention() {
     ])
     .unwrap();
 
-    // Simulate several tool calls and one intervention
+
     for i in 0..5 {
         let args = serde_json::json!({"i": i});
         call_tool(&mut orch, "generic_tool", args, i as u64);

@@ -21,9 +21,6 @@ reqwest.workspace = true
 anyhow.workspace = true
 regex = "1"
 microloop.workspace = true
-sha2 = "0.10"
-hex = "0.4"
-rusqlite = { version = "0.31", features = ["bundled"] }
 
 [dev-dependencies]
 tempfile = "3"

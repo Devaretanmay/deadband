@@ -99,7 +99,7 @@ pub fn extract_api_key(headers: &[(String, String)]) -> Option<String> {
     None
 }
 
-pub fn parse_request(body: &str, path: &str, headers: &[(String, String)]) -> Result<ApiRequest, RequestError> {
+pub fn parse_request(body: &str, path: &str, _headers: &[(String, String)]) -> Result<ApiRequest, RequestError> {
     let raw: Value = serde_json::from_str(body).map_err(|e| RequestError::JsonParse(e.to_string()))?;
 
     let messages = raw.get("messages")
@@ -125,7 +125,7 @@ pub fn build_upstream_body(request: &ApiRequest, intervention_content: Option<&s
         ApiRequest::OpenAI { raw, .. } => {
             let mut body = raw.clone();
             if let Some(content) = intervention_content {
-                // Inject a system message to redirect the agent
+
                 if let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) {
                     let system_msg = serde_json::json!({
                         "role": "system",

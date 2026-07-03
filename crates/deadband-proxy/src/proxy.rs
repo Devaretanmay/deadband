@@ -1,3 +1,4 @@
+
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -8,7 +9,6 @@ use hyper::body::Frame;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
 use std::sync::Mutex;
-use tokio_stream::wrappers::ReceiverStream;
 
 use deadband_core::{Orchestrator, OrchestratorConfig};
 
@@ -39,20 +39,36 @@ impl ProxyState {
         tokio::fs::create_dir_all(&config.backups_dir).await
             .with_context(|| format!("Failed to create backups dir: {:?}", config.backups_dir))?;
 
-        // Auto-detect upstream URL from tool discovery (e.g., OpenCode)
+
         let upstream_path = crate::config::ProxyConfig::data_dir().join("upstream_url.txt");
         if let Ok(url) = tokio::fs::read_to_string(&upstream_path).await {
             let url = url.trim().to_string();
             if !url.is_empty() && config.openai_base_url.is_none() {
-                // Strip /v1 suffix if present to match our config format
+
                 let base = url.strip_suffix("/v1").unwrap_or(&url).to_string();
                 config.openai_base_url = Some(base);
                 tracing::info!("Auto-configured upstream from tool discovery: {}", url);
             }
         }
 
-        let policy = tokio::fs::read_to_string(&config.policy_path).await
+        let mut policy = tokio::fs::read_to_string(&config.policy_path).await
             .with_context(|| format!("Failed to read policy file: {:?}", config.policy_path))?;
+
+        if config.recover {
+            policy.push_str(r#"
+
+  - name: "recover_on_loop"
+    when:
+      count:
+        ExactRepeat: 2
+    do:
+      type: "InjectPrompt"
+      params:
+        content: "The previous tool call was part of a loop. I have removed it from the conversation. Try a different approach that does not use this tool in the same way."
+        position: "ReplaceLast"
+"#);
+            tracing::info!("Recovery mode enabled — loop detection at 2 repeats triggers context surgery");
+        }
 
         let orchestrator = Orchestrator::new(
             OrchestratorConfig::default(),
@@ -71,9 +87,9 @@ impl ProxyState {
         })
     }
 
-    /// Record a request and (optionally) detected loops.
-    /// Stats are persisted to disk after every call so `deadband status`
-    /// can read them even if the proxy is interrupted.
+
+
+
     pub fn record_request(&self, loops: u64, interventions: u64, prevented: u64) {
         {
             let mut stats = self.stats.lock().unwrap();
@@ -87,8 +103,8 @@ impl ProxyState {
         self.persist_stats();
     }
 
-    /// Persist current stats to `~/.deadband/stats.json`.
-    /// Creates the directory if it doesn't exist.
+
+
     fn persist_stats(&self) {
         let data_dir = crate::config::ProxyConfig::data_dir();
         if let Err(e) = std::fs::create_dir_all(&data_dir) {
@@ -182,10 +198,9 @@ async fn handle_request(
     let path = req.uri().path().to_string();
     let method = req.method().clone();
 
-    let mut headers = Vec::new();
-    for (key, value) in req.headers() {
-        headers.push((key.to_string(), value.to_str().unwrap_or("").to_string()));
-    }
+    let headers: Vec<(String, String)> = req.headers().iter().map(|(key, value)| {
+        (key.to_string(), value.to_str().unwrap_or("").to_string())
+    }).collect();
 
     let api_key = crate::request::extract_api_key(&headers);
 
@@ -215,7 +230,7 @@ async fn handle_request(
         crate::request::ApiRequest::Anthropic { stream, .. } => *stream,
     };
 
-    let upstream_base = determine_upstream_url(&parsed, &state.config, &headers);
+    let upstream_base = determine_upstream_url(&parsed, &state.config);
     let upstream_url = format!("{}{}", upstream_base, path);
 
     let upstream_body = crate::request::build_upstream_body(&parsed, None);
@@ -262,7 +277,6 @@ async fn handle_request(
 fn determine_upstream_url(
     request: &crate::request::ApiRequest,
     config: &ProxyConfig,
-    _headers: &[(String, String)],
 ) -> String {
     match request {
         crate::request::ApiRequest::OpenAI { .. } => {
@@ -347,11 +361,11 @@ async fn handle_streaming_response(
     state: Arc<ProxyState>,
 ) -> Result<hyper::Response<BoxedBody>, std::convert::Infallible> {
     let mut builder = hyper::Response::builder().status(status.as_u16());
-    // Forward upstream response headers so the client receives accurate
-    // content-type, caching headers, and other metadata.
+
+
     for (key, value) in upstream_headers.iter() {
         let key_str = key.as_str();
-        // Skip hop-by-hop headers that hyper will set for us
+
         if key_str == "transfer-encoding"
             || key_str == "connection"
             || key_str == "content-length"
@@ -362,7 +376,7 @@ async fn handle_streaming_response(
             builder = builder.header(key_str, val);
         }
     }
-    // Ensure content-type is text/event-stream for SSE
+
     builder = builder.header("content-type", "text/event-stream");
     builder = builder.header("cache-control", "no-cache");
 
@@ -399,13 +413,21 @@ async fn handle_streaming_response(
             }
         }
 
-        // Flush remaining buffered chunks when upstream stream ends
+
         let (flush_data, had_any_intervention) = {
             let mut orch = state_clone.orchestrator.lock().unwrap();
             let had = sse_proc.has_intervention();
             let mut data = Vec::new();
             while let Some(chunk) = sse_proc.flush(Some(&mut orch), "proxy") {
                 data.push(chunk);
+            }
+
+
+
+            if !had && sse_proc.has_intervention() {
+                has_intervened = true;
+                state_clone.record_request(1, 1, 1);
+                tracing::info!("Streaming intervention applied during flush");
             }
             (data, has_intervened || had)
         };
@@ -416,8 +438,8 @@ async fn handle_streaming_response(
             }
         }
 
-        // Ensure stats are recorded even if no intervention was found
-        // (e.g. the request completed without triggering any loop)
+
+
         if !had_any_intervention {
             state_clone.record_request(0, 0, 0);
         }

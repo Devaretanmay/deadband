@@ -6,36 +6,30 @@ RESULT_FILE="/tmp/deadband_test_result.txt"
 
 echo "test starting" > "$RESULT_FILE"
 
-# Cleanup function
 cleanup() {
     echo "cleaning up..." >> "$RESULT_FILE"
     kill $MOCK_PID $PROXY_PID 2>/dev/null
     wait $MOCK_PID $PROXY_PID 2>/dev/null
 }
 
-# Kill any existing servers
 kill -9 $(lsof -t -i:8000 -i:4399 2>/dev/null) 2>/dev/null || true
 sleep 1
 
-# Set upstream URL
 echo 'http://localhost:8000/v1' > /Users/tanmaydevare/.deadband/upstream_url.txt
 rm -f /Users/tanmaydevare/.deadband/stats.json
 
 cd "$PROJECT_DIR"
 
-# Start mock server with nohup
 nohup python3 test_mock_upstream.py > /tmp/mock_server.log 2>&1 &
 MOCK_PID=$!
 echo "mock PID=$MOCK_PID" >> "$RESULT_FILE"
 sleep 1
 
-# Start proxy
 nohup ./target/release/deadband proxy --port 4399 --config deadband.yaml > /tmp/proxy_debug.log 2>&1 &
 PROXY_PID=$!
 echo "proxy PID=$PROXY_PID" >> "$RESULT_FILE"
 sleep 3
 
-# Verify mock server
 echo "=== MOCK CHECK ===" >> "$RESULT_FILE"
 curl -s --max-time 3 http://localhost:8000/v1/chat/completions \
     -H 'Content-Type: application/json' \
@@ -43,7 +37,6 @@ curl -s --max-time 3 http://localhost:8000/v1/chat/completions \
 
 echo "=== MOCK CHECK DONE ===" >> "$RESULT_FILE"
 
-# Verify proxy
 echo "=== PROXY CHECK ===" >> "$RESULT_FILE"
 curl -s --max-time 3 -o /dev/null -w "proxy HTTP status: %{http_code}" http://localhost:4399/ 2>&1 >> "$RESULT_FILE"
 echo "" >> "$RESULT_FILE"
@@ -68,6 +61,5 @@ cat /Users/tanmaydevare/.deadband/stats.json 2>/dev/null >> "$RESULT_FILE" || ec
 echo "=== PROXY LOG ===" >> "$RESULT_FILE"
 cat /tmp/proxy_debug.log >> "$RESULT_FILE"
 
-# Cleanup
 kill $PROXY_PID $MOCK_PID 2>/dev/null
 echo "=== TEST DONE ===" >> "$RESULT_FILE"

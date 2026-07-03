@@ -31,7 +31,7 @@ impl PyOrchestrator {
         let args: serde_json::Value =
             serde_json::from_str(arguments).unwrap_or(serde_json::Value::Null);
         let event = ToolCallEvent::started(thread_id, step, tool_name, args);
-        
+
         let (intervention, report) =
             self.inner.process(event, &deadband_core::AdapterCapabilities::default());
         Ok((

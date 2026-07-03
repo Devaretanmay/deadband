@@ -1,3 +1,4 @@
+
 use serde_json::Value;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -38,17 +39,17 @@ fn parse_json_path(path: &str) -> Vec<String> {
 
 pub fn auto_infer_volatile_fields(
     current_args: &Value,
-    history: &[(&str, &Value)],  // (tool_name, arguments) pairs from history
+    history: &[(&str, &Value)],
     tool_name: &str,
     min_occurrences: usize,
 ) -> Vec<String> {
-    // Only process JSON objects
+
     let current_obj = match current_args {
         Value::Object(map) => map,
         _ => return Vec::new(),
     };
 
-    // Filter history to same tool
+
     let same_tool: Vec<&Value> = history
         .iter()
         .filter(|(t, _)| *t == tool_name)
@@ -80,18 +81,18 @@ pub fn auto_infer_volatile_fields(
             }
         }
 
-        // Track which fields differ
+
         for diff in &diffs {
             *field_diff_counts.entry(diff.clone()).or_insert(0) += 1;
         }
 
-        // If exactly one field differs, it's a candidate for auto-inference
+
         if diffs.len() == 1 {
             auto_inferred.insert(diffs[0].clone());
         }
     }
 
-    // Only keep fields that differ in at least `min_occurrences` prior calls
+
     auto_inferred.retain(|field| {
         let count = field_diff_counts.get(field).copied().unwrap_or(0);
         count >= min_occurrences

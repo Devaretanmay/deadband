@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 pub struct ServiceManager;
 
 impl ServiceManager {
-    /// Install the proxy as a system service (launchd on macOS, systemd on Linux).
+
     pub fn install(port: u16, _binary_path: &PathBuf) -> Result<()> {
         #[cfg(target_os = "macos")]
         {
@@ -22,7 +22,7 @@ impl ServiceManager {
         Ok(())
     }
 
-    /// Remove the system service.
+
     pub fn uninstall() -> Result<()> {
         #[cfg(target_os = "macos")]
         {
@@ -39,7 +39,7 @@ impl ServiceManager {
         Ok(())
     }
 
-    /// Check if the service is installed and running.
+
     pub fn status() -> Result<ServiceStatus> {
         #[cfg(target_os = "macos")]
         {
@@ -59,7 +59,7 @@ impl ServiceManager {
         }
     }
 
-    // --- macOS launchd ---
+
     #[cfg(target_os = "macos")]
     fn install_launchd(port: u16, binary_path: &PathBuf) -> Result<()> {
         let plist_path = Self::launchd_plist_path();
@@ -104,7 +104,7 @@ impl ServiceManager {
         std::fs::write(&plist_path, plist)
             .with_context(|| format!("Failed to write launchd plist: {:?}", plist_path))?;
 
-        // Load the service
+
         std::process::Command::new("launchctl")
             .args(["load", &plist_path.to_string_lossy()])
             .output()
@@ -156,7 +156,7 @@ impl ServiceManager {
             .join("com.deadband.proxy.plist")
     }
 
-    // --- Linux systemd ---
+
     #[cfg(target_os = "linux")]
     fn install_systemd(port: u16, binary_path: &PathBuf) -> Result<()> {
         let service_path = PathBuf::from("/etc/systemd/system/deadband-proxy.service");
@@ -239,7 +239,7 @@ WantedBy=multi-user.target
         }
     }
 
-    // --- Windows Service ---
+
     #[cfg(target_os = "windows")]
     fn install_windows_service(_port: u16, _binary_path: &PathBuf) -> Result<()> {
         tracing::info!("Windows service installation not yet implemented");

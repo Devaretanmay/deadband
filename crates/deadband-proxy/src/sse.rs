@@ -8,6 +8,7 @@ pub enum ProcessorState {
     Analyzing,
     Replaying { index: usize, total: usize },
     Injecting { frame_index: usize },
+    Splicing { frame_index: usize },
     Streaming,
     Done,
 }
@@ -18,6 +19,9 @@ pub struct SseProcessor {
     state: ProcessorState,
     intervention: Option<Intervention>,
     injection_frames: Vec<Bytes>,
+    splice_at: Option<usize>,
+    replacement_frames: Vec<Bytes>,
+    skip_tool_call_remainder: bool,
 }
 
 fn make_intervention_sse_openai(prompt: &str) -> Bytes {
@@ -33,6 +37,29 @@ fn make_intervention_sse_openai(prompt: &str) -> Bytes {
     Bytes::from(format!("data: {}\n\n", payload.to_string()))
 }
 
+pub fn make_replacement_frames(prompt: &str) -> Vec<Bytes> {
+    let content_payload = serde_json::json!({
+        "choices": [{
+            "index": 0,
+            "delta": {
+                "role": "assistant",
+                "content": prompt
+            }
+        }]
+    });
+    let stop_payload = serde_json::json!({
+        "choices": [{
+            "index": 0,
+            "finish_reason": "stop",
+            "delta": {}
+        }]
+    });
+    vec![
+        Bytes::from(format!("data: {}\n\n", content_payload.to_string())),
+        Bytes::from(format!("data: {}\n\n", stop_payload.to_string())),
+    ]
+}
+
 impl SseProcessor {
     pub fn new(buffer_size: usize) -> Self {
         Self {
@@ -41,6 +68,9 @@ impl SseProcessor {
             state: ProcessorState::Buffering,
             intervention: None,
             injection_frames: Vec::new(),
+            splice_at: None,
+            replacement_frames: Vec::new(),
+            skip_tool_call_remainder: false,
         }
     }
 
@@ -52,36 +82,45 @@ impl SseProcessor {
     ) -> Option<Bytes> {
         match self.state {
             ProcessorState::Buffering => {
-                // Forward the chunk immediately so the client doesn't stall,
-                // but also buffer it for replay (if intervention found later).
+
+
                 self.buffer.push_back(chunk.clone());
 
-                // Scan every chunk for tool calls as it arrives — don't wait
-                // for the buffer to fill, which may never happen (flush case)
-                // or may miss tool calls that arrive after content deltas.
+
+
+
                 if let Some(orch) = orchestrator {
                     self.scan_chunk_for_tool_calls(&chunk, orch, thread_id);
                 }
 
+                if self.splice_at.is_some() {
+                    if self.buffer.len() > self.splice_at.unwrap() + 1 {
+                        self.buffer.truncate(self.splice_at.unwrap() + 1);
+                    }
+                    self.skip_tool_call_remainder = true;
+                    let total = self.splice_at.unwrap();
+                    if total > 0 {
+                        self.state = ProcessorState::Replaying { index: 1, total };
+                        return Some(self.buffer[0].clone());
+                    }
+                    self.state = ProcessorState::Splicing { frame_index: 0 };
+                    return self.emit_next_replacement();
+                }
+
                 if self.buffer.len() >= self.buffer_size {
-                    // Buffer is full — set up replay/injection state.
-                    // Tool calls were already processed per-chunk above,
-                    // so analyze() only needs to configure buffer replay.
                     self.state = ProcessorState::Analyzing;
                     self.analyze_for_replay();
 
                     if !self.injection_frames.is_empty() {
-                        // Intervention found — replay buffer with injection frames
                         let total = self.buffer.len();
                         let first = self.buffer[0].clone();
                         self.state = ProcessorState::Replaying { index: 1, total };
                         return Some(first);
                     }
 
-                    // No intervention — skip straight to streaming
                     self.state = ProcessorState::Streaming;
                 }
-                // Always forward the chunk to the client immediately
+
                 Some(chunk)
             }
             ProcessorState::Analyzing => {
@@ -93,17 +132,29 @@ impl SseProcessor {
                     let c = self.buffer[index].clone();
                     let new_index = index + 1;
                     let done = new_index >= total;
-                    self.state = if done && !self.injection_frames.is_empty() {
-                        ProcessorState::Injecting { frame_index: 0 }
-                    } else if done {
-                        ProcessorState::Streaming
+                    self.state = if done {
+                        if !self.replacement_frames.is_empty() {
+                            ProcessorState::Splicing { frame_index: 0 }
+                        } else if !self.injection_frames.is_empty() {
+                            ProcessorState::Injecting { frame_index: 0 }
+                        } else {
+                            ProcessorState::Streaming
+                        }
                     } else {
                         ProcessorState::Replaying { index: new_index, total }
                     };
                     Some(c)
                 } else {
-                    self.state = ProcessorState::Streaming;
-                    Some(chunk)
+                    if !self.replacement_frames.is_empty() {
+                        self.state = ProcessorState::Splicing { frame_index: 0 };
+                        self.emit_next_replacement()
+                    } else if !self.injection_frames.is_empty() {
+                        self.state = ProcessorState::Injecting { frame_index: 0 };
+                        self.emit_next_injection()
+                    } else {
+                        self.state = ProcessorState::Streaming;
+                        Some(chunk)
+                    }
                 }
             }
             ProcessorState::Injecting { frame_index } => {
@@ -112,8 +163,6 @@ impl SseProcessor {
                     self.state = ProcessorState::Injecting { frame_index: next };
                     Some(self.injection_frames[frame_index].clone())
                 } else if next == self.injection_frames.len() {
-                    // Last injection frame emitted — clear so flush()
-                    // doesn't re-emit frames that were already sent.
                     let last = self.injection_frames[frame_index].clone();
                     self.injection_frames.clear();
                     self.state = ProcessorState::Streaming;
@@ -124,16 +173,39 @@ impl SseProcessor {
                     Some(chunk)
                 }
             }
+            ProcessorState::Splicing { frame_index } => {
+                let next = frame_index + 1;
+                if next < self.replacement_frames.len() {
+                    self.state = ProcessorState::Splicing { frame_index: next };
+                    Some(self.replacement_frames[frame_index].clone())
+                } else if next == self.replacement_frames.len() {
+                    let last = self.replacement_frames[frame_index].clone();
+                    self.replacement_frames.clear();
+                    self.state = ProcessorState::Streaming;
+                    Some(last)
+                } else {
+                    self.replacement_frames.clear();
+                    self.state = ProcessorState::Streaming;
+                    Some(chunk)
+                }
+            }
             ProcessorState::Streaming => {
-                // Continuously scan for tool calls even after the buffering phase.
-                // Tool call SSE deltas often arrive after several content-delta chunks,
-                // so waiting for buffer to fill would miss them entirely.
+                if self.skip_tool_call_remainder {
+                    let text = String::from_utf8_lossy(&chunk);
+                    if text.contains("\"finish_reason\"")
+                        || (text.contains("\"tool_calls\"") && text.contains("\"function\""))
+                    {
+                        return None;
+                    }
+                    self.skip_tool_call_remainder = false;
+                }
+
                 if let Some(orch) = orchestrator {
                     self.scan_chunk_for_tool_calls(&chunk, orch, thread_id);
                 }
-                // If scan_chunk_for_tool_calls generated injection frames, emit them
-                // immediately rather than leaving them unsent (the client already got
-                // the original chunks, so we inject the intervention now).
+
+
+
                 if !self.injection_frames.is_empty() {
                     let frame = self.injection_frames[0].clone();
                     self.state = ProcessorState::Injecting { frame_index: 1 };
@@ -145,11 +217,11 @@ impl SseProcessor {
         }
     }
 
-    /// Configure the processor for replay mode after the buffer has filled
-    /// (or on flush). Tool call extraction and orchestrator processing is done
-    /// per-chunk in `push_chunk` (both Buffering and Streaming states), so
-    /// this only transitions state and returns the first buffer chunk for
-    /// replay — it does NOT re-call the orchestrator.
+
+
+
+
+
     fn analyze_for_replay(&mut self) -> Option<Bytes> {
         let total = self.buffer.len();
         if total > 0 {
@@ -162,9 +234,9 @@ impl SseProcessor {
         }
     }
 
-    /// Scan a single SSE chunk for tool call deltas and forward them to the
-    /// orchestrator. This is called from the `Streaming` state to catch tool
-    /// calls that arrive after the initial buffer fills with content chunks.
+
+
+
     fn scan_chunk_for_tool_calls(
         &mut self,
         chunk: &Bytes,
@@ -184,16 +256,16 @@ impl SseProcessor {
         }
     }
 
-    /// Common logic to extract tool calls from a parsed SSE JSON value and
-    /// forward them to the orchestrator. Handles both OpenAI and Anthropic
-    /// streaming formats.
+
+
+
     fn process_tool_call_json(
         &mut self,
         val: &serde_json::Value,
         orchestrator: &mut Orchestrator,
         thread_id: &str,
     ) {
-        // OpenAI format: choices[].delta.tool_calls[].function
+
         if let Some(choices) = val.get("choices").and_then(|c| c.as_array()) {
             for choice in choices {
                 if let Some(delta) = choice.get("delta") {
@@ -220,8 +292,15 @@ impl SseProcessor {
                                     );
                                     if let Some(intv) = intervention {
                                         if let Some(prompt) = intv.prompt_content() {
-                                            self.injection_frames
-                                                .push(make_intervention_sse_openai(prompt));
+                                            match self.state {
+                                                ProcessorState::Buffering => {
+                                                    self.splice_at = Some(self.buffer.len() - 1);
+                                                    self.replacement_frames.extend(make_replacement_frames(prompt));
+                                                }
+                                                _ => {
+                                                    self.injection_frames.push(make_intervention_sse_openai(prompt));
+                                                }
+                                            }
                                         }
                                         self.intervention = Some(intv);
                                         return;
@@ -233,7 +312,7 @@ impl SseProcessor {
                 }
             }
         }
-        // Anthropic format: content[].type == "tool_use"
+
         if let Some(content) = val.get("content").and_then(|c| c.as_array()) {
             for block in content {
                 if block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
@@ -257,8 +336,15 @@ impl SseProcessor {
                         );
                         if let Some(intv) = intervention {
                             if let Some(prompt) = intv.prompt_content() {
-                                self.injection_frames
-                                    .push(make_intervention_sse_openai(prompt));
+                                match self.state {
+                                    ProcessorState::Buffering => {
+                                        self.splice_at = Some(self.buffer.len() - 1);
+                                        self.replacement_frames.extend(make_replacement_frames(prompt));
+                                    }
+                                    _ => {
+                                        self.injection_frames.push(make_intervention_sse_openai(prompt));
+                                    }
+                                }
                             }
                             self.intervention = Some(intv);
                             return;
@@ -269,51 +355,6 @@ impl SseProcessor {
         }
     }
 
-    fn extract_tool_calls_from_buffer(&self) -> Vec<(String, String)> {
-        let mut calls = Vec::new();
-        for chunk in &self.buffer {
-            let text = String::from_utf8_lossy(chunk);
-            for line in text.lines() {
-                if let Some(data) = line.strip_prefix("data: ") {
-                    if data == "[DONE]" {
-                        continue;
-                    }
-                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
-                        if let Some(choices) = val.get("choices").and_then(|c| c.as_array()) {
-                            for choice in choices {
-                                if let Some(delta) = choice.get("delta") {
-                                    if let Some(tool_calls) = delta.get("tool_calls").and_then(|t| t.as_array()) {
-                                        for tc in tool_calls {
-                                            if let Some(func) = tc.get("function") {
-                                                let name = func.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                                                let args = func.get("arguments").and_then(|a| a.as_str()).unwrap_or("");
-                                                if !name.is_empty() {
-                                                    calls.push((name.to_string(), args.to_string()));
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if let Some(content) = val.get("content").and_then(|c| c.as_array()) {
-                            for block in content {
-                                if block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
-                                    let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                                    let input = block.get("input").map(|i| i.to_string()).unwrap_or_default();
-                                    if !name.is_empty() {
-                                        calls.push((name.to_string(), input));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        calls
-    }
-
     pub fn intervention(&self) -> Option<&Intervention> {
         self.intervention.as_ref()
     }
@@ -322,11 +363,35 @@ impl SseProcessor {
         self.intervention.is_some()
     }
 
+    pub fn set_surgery_state(
+        &mut self,
+        state: ProcessorState,
+        splice_at: Option<usize>,
+        replacement_frames: Vec<Bytes>,
+        skip_remainder: bool,
+    ) {
+        self.state = state;
+        self.splice_at = splice_at;
+        self.replacement_frames = replacement_frames;
+        self.skip_tool_call_remainder = skip_remainder;
+    }
+
+    pub fn surgery_state(&self) -> (Option<usize>, bool) {
+        (self.splice_at, self.skip_tool_call_remainder)
+    }
+
+    pub fn push_buffer(&mut self, chunk: Bytes) {
+        self.buffer.push_back(chunk);
+    }
+
     pub fn reset(&mut self) {
         self.buffer.clear();
         self.state = ProcessorState::Buffering;
         self.intervention = None;
         self.injection_frames.clear();
+        self.splice_at = None;
+        self.replacement_frames.clear();
+        self.skip_tool_call_remainder = false;
     }
 
     pub fn state(&self) -> &ProcessorState {
@@ -340,11 +405,37 @@ impl SseProcessor {
                     self.state = ProcessorState::Done;
                     return None;
                 }
+
+                if self.intervention.is_none() {
+                    if let Some(orch) = orchestrator {
+                        for i in 0..self.buffer.len() {
+                            let chunk = self.buffer[i].clone();
+                            self.scan_chunk_for_tool_calls(&chunk, orch, thread_id);
+
+                            if self.intervention.is_some() {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if self.splice_at.is_some() {
+                    if self.buffer.len() > self.splice_at.unwrap() + 1 {
+                        self.buffer.truncate(self.splice_at.unwrap() + 1);
+                    }
+                    self.skip_tool_call_remainder = true;
+                    let total = self.splice_at.unwrap();
+                    if total > 0 {
+                        self.state = ProcessorState::Replaying { index: 1, total };
+                        return Some(self.buffer[0].clone());
+                    }
+                    self.state = ProcessorState::Splicing { frame_index: 0 };
+                    return self.emit_next_replacement();
+                }
+
                 self.state = ProcessorState::Analyzing;
                 self.analyze_for_replay();
-                // Chunks were already forwarded during buffering (and tool calls
-                // were already processed per-chunk), so only replay if there's
-                // an intervention with injection frames.
+
                 if !self.injection_frames.is_empty() {
                     let total = self.buffer.len();
                     let first = self.buffer[0].clone();
@@ -359,6 +450,9 @@ impl SseProcessor {
                     let c = self.buffer[index].clone();
                     self.state = ProcessorState::Replaying { index: index + 1, total };
                     Some(c)
+                } else if !self.replacement_frames.is_empty() {
+                    self.state = ProcessorState::Splicing { frame_index: 0 };
+                    self.emit_next_replacement()
                 } else if !self.injection_frames.is_empty() {
                     self.state = ProcessorState::Injecting { frame_index: 0 };
                     self.emit_next_injection()
@@ -367,16 +461,19 @@ impl SseProcessor {
                     None
                 }
             }
-            ProcessorState::Injecting { frame_index } => {
+            ProcessorState::Injecting { .. } => {
                 self.emit_next_injection()
+            }
+            ProcessorState::Splicing { .. } => {
+                self.emit_next_replacement()
             }
             ProcessorState::Analyzing => {
                 self.state = ProcessorState::Streaming;
                 None
             }
             ProcessorState::Streaming => {
-                // If injection frames were generated during streaming (tool call
-                // detected after buffer fill), emit them as a safety net.
+
+
                 if !self.injection_frames.is_empty() {
                     self.state = ProcessorState::Injecting { frame_index: 0 };
                     return self.emit_next_injection();
@@ -410,6 +507,29 @@ impl SseProcessor {
             None
         }
     }
+
+    fn emit_next_replacement(&mut self) -> Option<Bytes> {
+        if let ProcessorState::Splicing { frame_index } = self.state {
+            let next = frame_index + 1;
+            if next < self.replacement_frames.len() {
+                let frame = self.replacement_frames[frame_index].clone();
+                self.state = ProcessorState::Splicing { frame_index: next };
+                Some(frame)
+            } else if next == self.replacement_frames.len() {
+                let last = self.replacement_frames[frame_index].clone();
+                self.replacement_frames.clear();
+                self.state = ProcessorState::Done;
+                Some(last)
+            } else {
+                self.replacement_frames.clear();
+                self.state = ProcessorState::Done;
+                None
+            }
+        } else {
+            self.state = ProcessorState::Done;
+            None
+        }
+    }
 }
 
 #[cfg(test)]
@@ -422,7 +542,7 @@ mod tests {
         assert_eq!(proc.state(), &ProcessorState::Buffering);
 
         let chunk = Bytes::from("data: {\"choices\": [{\"delta\": {}}]}\n\n");
-        // Chunks are now forwarded immediately even during buffering
+
         let result = proc.push_chunk(chunk, None, "test");
         assert!(result.is_some());
         assert_eq!(proc.state(), &ProcessorState::Buffering);
@@ -433,23 +553,11 @@ mod tests {
         let mut proc = SseProcessor::new(2);
         let chunk = Bytes::from("data: {}\n\n");
 
-        // Both chunks forwarded immediately
+
         assert!(proc.push_chunk(chunk.clone(), None, "test").is_some());
         let result = proc.push_chunk(chunk.clone(), None, "test");
         assert!(result.is_some());
         assert_eq!(proc.state(), &ProcessorState::Streaming);
-    }
-
-    #[test]
-    fn test_extract_tool_calls_openai() {
-        let mut proc = SseProcessor::new(10);
-        let sse = "data: {\"choices\": [{\"delta\": {\"tool_calls\": [{\"index\": 0, \"function\": {\"name\": \"search\", \"arguments\": \"{\\\"q\\\": \\\"hello\\\"}\"}}]}}]}\n\n";
-        let chunk = Bytes::from(sse);
-        proc.push_chunk(chunk, None, "test");
-
-        let calls = proc.extract_tool_calls_from_buffer();
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].0, "search");
     }
 
     #[test]
@@ -503,5 +611,79 @@ mod tests {
         assert!(text.starts_with("data: "));
         assert!(text.contains("Stop looping"));
         assert!(text.contains("[INTERVENTION]"));
+    }
+
+    #[test]
+    fn test_splicing_removes_tool_call() {
+        let mut proc = SseProcessor::new(10);
+        proc.buffer.push_back(Bytes::from("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"}}]}\n\n"));
+        proc.buffer.push_back(Bytes::from("data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"search\",\"arguments\":\"{}\"}}]}}]}\n\n"));
+        proc.buffer.push_back(Bytes::from("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\" after\"}}]}\n\n"));
+        proc.splice_at = Some(1);
+        proc.replacement_frames = make_replacement_frames("Let me try a different approach.");
+
+        proc.state = ProcessorState::Replaying { index: 1, total: 1 };
+
+        let r1 = proc.push_chunk(Bytes::new(), None, "test");
+        assert!(r1.is_some());
+        let r1b = r1.unwrap();
+        let t1 = String::from_utf8_lossy(&r1b);
+        assert!(t1.contains("Let me try a different approach"));
+        assert!(!t1.contains("[INTERVENTION]"));
+
+        let r2 = proc.push_chunk(Bytes::new(), None, "test");
+        assert!(r2.is_some());
+        let r2b = r2.unwrap();
+        let t2 = String::from_utf8_lossy(&r2b);
+        assert!(t2.contains("finish_reason"));
+
+        assert_eq!(proc.state(), &ProcessorState::Streaming);
+
+        let r3 = proc.push_chunk(Bytes::from("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"passthrough\"}}]}\n\n"), None, "test");
+        assert!(r3.is_some());
+        assert!(String::from_utf8_lossy(&r3.unwrap()).contains("passthrough"));
+    }
+
+    #[test]
+    fn test_splicing_then_streaming() {
+        let mut proc = SseProcessor::new(10);
+        proc.buffer.push_back(Bytes::from("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hello\"}}]}\n\n"));
+        proc.buffer.push_back(Bytes::from("data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"search\",\"arguments\":\"{}\"}}]}}]}\n\n"));
+        proc.splice_at = Some(1);
+        proc.replacement_frames = make_replacement_frames("Trying something else.");
+
+        proc.state = ProcessorState::Replaying { index: 1, total: 1 };
+        let _ = proc.push_chunk(Bytes::new(), None, "test");
+        let _ = proc.push_chunk(Bytes::new(), None, "test");
+
+        assert_eq!(proc.state(), &ProcessorState::Streaming);
+
+        let r = proc.push_chunk(Bytes::from("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"new data\"}}]}\n\n"), None, "test");
+        assert!(r.is_some());
+        assert!(String::from_utf8_lossy(&r.unwrap()).contains("new data"));
+    }
+
+    #[test]
+    fn test_splicing_no_replay_needed() {
+        let mut proc = SseProcessor::new(10);
+        proc.buffer.push_back(Bytes::from("data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"search\",\"arguments\":\"{}\"}}]}}]}\n\n"));
+        proc.buffer.push_back(Bytes::from("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\" after\"}}]}\n\n"));
+        proc.splice_at = Some(0);
+        proc.replacement_frames = make_replacement_frames("Trying something else.");
+
+        proc.state = ProcessorState::Splicing { frame_index: 0 };
+
+        let r = proc.push_chunk(Bytes::new(), None, "test");
+        assert!(r.is_some());
+        assert!(String::from_utf8_lossy(&r.unwrap()).contains("Trying something else."));
+
+        let r = proc.push_chunk(Bytes::new(), None, "test");
+        assert!(r.is_some());
+
+        assert_eq!(proc.state(), &ProcessorState::Streaming);
+
+        let r2 = proc.push_chunk(Bytes::from("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"after\"}}]}\n\n"), None, "test");
+        assert!(r2.is_some());
+        assert!(String::from_utf8_lossy(&r2.unwrap()).contains("after"));
     }
 }

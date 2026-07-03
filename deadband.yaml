@@ -1,4 +1,14 @@
 policies:
+  - name: "recover_on_loop"
+    when:
+      count:
+        ExactRepeat: 2
+    do:
+      type: "InjectPrompt"
+      params:
+        content: "The previous tool call was part of a loop. I have removed it. Try a different approach."
+        position: "ReplaceLast"
+
   - name: "hard_fork_on_repeats"
     when:
       count:
@@ -28,7 +38,7 @@ policies:
         content: "You're trying similar approaches. Consider a different strategy."
         position: "BeforeNext"
 
-  - name: "abort_on_budget"
+  - name: "abort_on_escalation"
     when:
       count:
         ExactRepeat: 10

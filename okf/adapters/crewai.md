@@ -35,5 +35,5 @@ if let Some(intervention) = flow.intercept_tool_call(
 |------------|-----------|
 | Retry |  |
 | Abort |  (resets step counter) |
-| InjectPrompt | ❌ |
-| ReplaceTool | ❌ |
+| InjectPrompt |  |
+| ReplaceTool |  |

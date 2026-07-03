@@ -17,63 +17,69 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Enable Deadband Proxy — auto-configure tools and start the proxy
+
     Enable {
-        /// Enable persistence (system service)
+
         #[arg(long)]
         persistent: bool,
-        /// Port to listen on (default: 4399)
+
         #[arg(short, long, default_value_t = 4399)]
         port: u16,
-        /// Path to policy YAML
+
         #[arg(short, long, default_value = "deadband.yaml")]
         config: PathBuf,
+
+        #[arg(long)]
+        recover: bool,
     },
-    /// Disable Deadband Proxy — restore configs and stop the proxy
+
     Disable,
-    /// Show proxy status and statistics
+
     Status,
-    /// Show proxy logs
+
     Logs {
-        /// Number of lines to show (default: 50)
+
         #[arg(long, default_value_t = 50)]
         tail: usize,
-        /// Follow log output
+
         #[arg(long)]
         follow: bool,
     },
-    /// Live monitoring TUI
+
     Monitor {
-        /// Port the proxy is on
+
         #[arg(short, long, default_value_t = 4399)]
         port: u16,
     },
-    /// Change proxy configuration
+
     Set {
-        /// Port to change to
+
         #[arg(short, long)]
         port: Option<u16>,
-        /// Path to policy YAML
+
         #[arg(short, long)]
         config: Option<PathBuf>,
     },
-    /// Start the proxy server (daemon mode)
+
     Proxy {
-        /// Port to listen on
+
         #[arg(short, long, default_value_t = 4399)]
         port: u16,
-        /// Path to policy YAML
+
         #[arg(short, long, default_value = "deadband.yaml")]
         config: PathBuf,
-        /// Run as daemon (no CLI output)
+
         #[arg(long)]
         daemon: bool,
+
+        #[arg(long)]
+        recover: bool,
     },
 }
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    // Initialize logging
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -84,25 +90,24 @@ async fn main() -> Result<(), anyhow::Error> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Enable { persistent, port, config } => {
-            cmd_enable(persistent, port, config).await?
+        Commands::Enable { persistent, port, config, recover } => {
+            cmd_enable(persistent, port, config, recover).await?
         }
         Commands::Disable => cmd_disable().await?,
         Commands::Status => cmd_status().await?,
         Commands::Logs { tail, follow } => cmd_logs(tail, follow)?,
         Commands::Monitor { port } => cmd_monitor(port).await?,
         Commands::Set { port, config } => cmd_set(port, config).await?,
-        Commands::Proxy { port, config, daemon } => cmd_proxy(port, config, daemon).await?,
+        Commands::Proxy { port, config, daemon, recover } => cmd_proxy(port, config, daemon, recover).await?,
     }
 
     Ok(())
 }
 
-async fn cmd_enable(persistent: bool, port: u16, config: PathBuf) -> Result<(), anyhow::Error> {
+async fn cmd_enable(persistent: bool, port: u16, config: PathBuf, recover: bool) -> Result<(), anyhow::Error> {
     println!(" Deadband Proxy — Enable");
     println!("============================");
 
-    let _data_dir = ProxyConfig::data_dir();
     let backups_dir = ProxyConfig::backups_dir();
     let discovery = ToolDiscovery::new(port, backups_dir);
 
@@ -117,18 +122,19 @@ async fn cmd_enable(persistent: bool, port: u16, config: PathBuf) -> Result<(), 
         println!("    No supported tools found");
     }
 
-    // Start the proxy
+
     println!("\n Starting proxy on port {}...", port);
     let pconfig = ProxyConfig {
         port,
         policy_path: config,
         persistent,
+        recover,
         ..Default::default()
     };
     let state = ProxyState::new(pconfig).await?;
 
     if persistent {
-        // Install system service
+
         let binary = std::env::current_exe()?;
         ServiceManager::install(port, &binary)?;
         println!("   System service installed (starts on boot)");
@@ -147,7 +153,7 @@ async fn cmd_enable(persistent: bool, port: u16, config: PathBuf) -> Result<(), 
     println!("   Use `deadband disable` to stop");
     println!("   Use `deadband logs --follow` to watch activity");
 
-    // Run the proxy (blocking)
+
     deadband_proxy::proxy::run_proxy(state).await?;
 
     Ok(())
@@ -157,16 +163,16 @@ async fn cmd_disable() -> Result<(), anyhow::Error> {
     println!(" Deadband Proxy — Disable");
     println!("=============================");
 
-    // Restore tool configs
+
     let backups_dir = ProxyConfig::backups_dir();
-    // We need a port for the discovery object but won't use it for disable
+
     let discovery = ToolDiscovery::new(4399, backups_dir);
     let tools = discovery.disable_all()?;
     for tool in &tools {
         println!("   {} config restored", tool.name);
     }
 
-    // Uninstall service if installed
+
     ServiceManager::uninstall()?;
     println!("   Service stopped and uninstalled");
 
@@ -178,11 +184,11 @@ async fn cmd_status() -> Result<(), anyhow::Error> {
     println!(" Deadband Proxy — Status");
     println!("===========================");
 
-    // Check service status
+
     let service_status = ServiceManager::status()?;
     println!("Service: {:?}", service_status);
 
-    // Try to read stats file
+
     let stats_path = ProxyConfig::data_dir().join("stats.json");
     if stats_path.exists() {
         let content = std::fs::read_to_string(&stats_path)?;
@@ -199,7 +205,7 @@ async fn cmd_status() -> Result<(), anyhow::Error> {
         println!("\n  No statistics available — proxy has not been started yet.");
     }
 
-    // Check proxy health
+
     match deadband_proxy::discovery::validate_proxy(4399) {
         Ok(_) => println!("\n   Proxy is reachable on port 4399"),
         Err(e) => println!("\n    Proxy check: {}", e),
@@ -216,7 +222,7 @@ fn cmd_logs(tail: usize, follow: bool) -> Result<(), anyhow::Error> {
     }
 
     if follow {
-        // Follow mode using tail -f
+
         let status = std::process::Command::new("tail")
             .args(["-f", &log_file.to_string_lossy()])
             .status()
@@ -225,7 +231,7 @@ fn cmd_logs(tail: usize, follow: bool) -> Result<(), anyhow::Error> {
             eprintln!("tail failed with status: {}", status);
         }
     } else {
-        // Show last N lines
+
         let output = std::process::Command::new("tail")
             .args(["-n", &tail.to_string(), &log_file.to_string_lossy()])
             .output()
@@ -240,11 +246,11 @@ async fn cmd_monitor(port: u16) -> Result<(), anyhow::Error> {
     println!(" Deadband Proxy — Live Monitor");
     println!("=================================");
 
-    // Simple polling monitor
+
     let stats_path = ProxyConfig::data_dir().join("stats.json");
 
     loop {
-        // Clear screen
+
         print!("\x1B[2J\x1B[1;1H");
 
         println!(" Deadband Proxy Monitor (port {})", port);
@@ -261,7 +267,7 @@ async fn cmd_monitor(port: u16) -> Result<(), anyhow::Error> {
                 println!("  Savings:      ${:.4}", stats.estimated_savings);
                 println!("  Status:       {}", stats.status);
 
-                // Bar chart
+
                 print!("\n  Loops: ");
                 for _ in 0..stats.loops_detected.min(50) {
                     print!("█");
@@ -309,25 +315,24 @@ async fn cmd_set(
     std::fs::write(&config_path, serde_json::to_string_pretty(&current)?)?;
     println!("  Settings saved to {:?}", config_path);
 
-    // If proxy is running, notify to reload
+
     println!("    Restart the proxy to apply changes");
 
     Ok(())
 }
 
-async fn cmd_proxy(port: u16, config: PathBuf, daemon: bool) -> Result<(), anyhow::Error> {
+async fn cmd_proxy(port: u16, config: PathBuf, daemon: bool, recover: bool) -> Result<(), anyhow::Error> {
     if daemon {
-        // Redirect output to log file
+
         let log_dir = ProxyConfig::log_dir();
         tokio::fs::create_dir_all(&log_dir).await?;
-        let _log_file = ProxyConfig::log_file();
-
         tracing::info!("Starting Deadband Proxy daemon on port {}", port);
     }
 
     let pconfig = ProxyConfig {
         port,
         policy_path: config,
+        recover,
         ..Default::default()
     };
 

@@ -21,7 +21,7 @@ impl ToolDiscovery {
         Self { port, backups_dir }
     }
 
-    /// Discover all supported tools on this system.
+
     pub fn discover_all(&self) -> Vec<ToolConfig> {
         let mut tools = Vec::new();
 
@@ -47,7 +47,7 @@ impl ToolDiscovery {
         tools
     }
 
-    /// Enable the proxy for all discovered tools.
+
     pub fn enable_all(&self) -> Result<Vec<ToolConfig>> {
         let tools = self.discover_all();
         let mut enabled = Vec::new();
@@ -64,7 +64,7 @@ impl ToolDiscovery {
         Ok(enabled)
     }
 
-    /// Disable the proxy for all previously configured tools.
+
     pub fn disable_all(&self) -> Result<Vec<ToolConfig>> {
         let tools = self.discover_all();
         let mut disabled = Vec::new();
@@ -85,7 +85,7 @@ impl ToolDiscovery {
         format!("http://localhost:{}", self.port)
     }
 
-    // --- Aider ---
+
     fn discover_aider(&self) -> Option<ToolConfig> {
         let home = dirs::home_dir()?;
         let paths = vec![
@@ -107,7 +107,7 @@ impl ToolDiscovery {
         None
     }
 
-    // --- Claude Code ---
+
     fn discover_claude_code(&self) -> Option<ToolConfig> {
         let home = dirs::home_dir()?;
         let path = home.join(".claude").join("settings.json");
@@ -123,10 +123,10 @@ impl ToolDiscovery {
         }
     }
 
-    // --- Cursor (macOS + Linux paths) ---
+
     fn discover_cursor(&self) -> Option<ToolConfig> {
         let home = dirs::home_dir()?;
-        // macOS path
+
         let mac_path = home.join("Library").join("Application Support").join("Cursor").join("User").join("settings.json");
         if mac_path.exists() {
             return Some(ToolConfig {
@@ -136,7 +136,7 @@ impl ToolDiscovery {
                 was_modified: false,
             });
         }
-        // Linux path
+
         let linux_path = home.join(".config").join("Cursor").join("User").join("settings.json");
         if linux_path.exists() {
             return Some(ToolConfig {
@@ -149,7 +149,7 @@ impl ToolDiscovery {
         None
     }
 
-    // --- Continue ---
+
     fn discover_continue(&self) -> Option<ToolConfig> {
         let home = dirs::home_dir()?;
         let path = home.join(".continue").join("config.json");
@@ -165,7 +165,7 @@ impl ToolDiscovery {
         }
     }
 
-    // --- OpenCode ---
+
     fn discover_opencode(&self) -> Option<ToolConfig> {
         let home = dirs::home_dir()?;
         let path = home.join(".config").join("opencode").join("opencode.json");
@@ -181,10 +181,10 @@ impl ToolDiscovery {
         }
     }
 
-    // --- GitHub Copilot CLI ---
+
     fn discover_copilot_cli(&self) -> Option<ToolConfig> {
-        // Copilot CLI doesn't have a config file per se,
-        // but we can check if the binary exists
+
+
         let copilot_paths = vec![
             PathBuf::from("/usr/local/bin/github-copilot-cli"),
             PathBuf::from("/opt/homebrew/bin/github-copilot-cli"),
@@ -202,9 +202,9 @@ impl ToolDiscovery {
         None
     }
 
-    /// Enable proxy for a specific tool by modifying its config.
+
     fn enable_tool(&self, tool: &ToolConfig) -> Result<ToolConfig> {
-        // Backup original config
+
         if tool.config_path.exists() {
             std::fs::create_dir_all(&self.backups_dir)
                 .with_context(|| format!("Failed to create backups dir: {:?}", self.backups_dir))?;
@@ -219,8 +219,8 @@ impl ToolDiscovery {
             "continue" => self.enable_continue(tool)?,
             "opencode" => self.enable_opencode(tool)?,
             _ => {
-                // For tools with env-var based configuration,
-                // we set the env vars in the shell profile
+
+
                 self.enable_env_based(tool)?;
             }
         }
@@ -271,8 +271,8 @@ impl ToolDiscovery {
         Ok(())
     }
 
-    fn enable_continue(&self, tool: &ToolConfig) -> Result<()> {
-        // Continue config is more complex - just log for now
+    fn enable_continue(&self, _tool: &ToolConfig) -> Result<()> {
+
         tracing::info!("Deadband Proxy for Continue: manual configuration may be needed");
         Ok(())
     }
@@ -284,20 +284,20 @@ impl ToolDiscovery {
         let mut config: serde_json::Value = serde_json::from_str(&content)
             .with_context(|| format!("Failed to parse OpenCode config: {}", tool.config_path.display()))?;
 
-        // Store the original upstream base URL for proxy configuration
-        // Modify all provider baseURLs to point to the Deadband Proxy
+
+
         if let Some(providers) = config.get_mut("provider").and_then(|p| p.as_object_mut()) {
             for (_name, provider) in providers.iter_mut() {
                 if let Some(options) = provider.get_mut("options").and_then(|o| o.as_object_mut()) {
                     if let Some(base_url) = options.get_mut("baseURL") {
-                        // Save the original upstream URL for the proxy config
+
                         let original_url = base_url.as_str().unwrap_or("").to_string();
-                        // Write it to a sidecar file so the proxy can read it
+
                         if !original_url.is_empty() && original_url != self.proxy_url() && !original_url.contains("localhost:4399") {
                             let upstream_path = crate::config::ProxyConfig::data_dir().join("upstream_url.txt");
                             let _ = std::fs::write(&upstream_path, &original_url);
                         }
-                        // Point to the proxy
+
                         *base_url = serde_json::Value::String(self.proxy_url());
                     }
                 }
@@ -312,12 +312,12 @@ impl ToolDiscovery {
         Ok(())
     }
 
-    fn enable_env_based(&self, _tool: &ToolConfig) -> Result<()> {
-        // Set env vars in shell profile
+    fn enable_env_based(&self, _: &ToolConfig) -> Result<()> {
+
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
         let proxy_url = self.proxy_url();
 
-        // Try to add to .zshrc or .bashrc
+
         for rc_file in &[".zshrc", ".bashrc", ".bash_profile"] {
             let rc_path = home.join(rc_file);
             if rc_path.exists() {
@@ -341,7 +341,7 @@ impl ToolDiscovery {
         Ok(())
     }
 
-    /// Disable proxy for a specific tool by restoring its backup.
+
     fn disable_tool(&self, tool_name: &str) -> Result<ToolConfig> {
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
 
@@ -384,7 +384,7 @@ pub fn validate_proxy(port: u16) -> Result<()> {
         .send()?;
 
     if resp.status().is_success() || resp.status().as_u16() == 400 {
-        // 400 is OK - means the proxy is running but request was invalid
+
         Ok(())
     } else {
         Err(anyhow::anyhow!("Proxy returned status: {}", resp.status()))

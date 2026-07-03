@@ -32,7 +32,6 @@ pub struct ReportMetadata {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ObservationMetadata {
     pub semantic_enabled: bool,
-    pub budget_enabled: bool,
     pub history_enabled: bool,
     pub rule_enabled: bool,
     pub exact_enabled: bool,
@@ -43,7 +42,6 @@ impl Default for ObservationMetadata {
     fn default() -> Self {
         Self {
             semantic_enabled: false,
-            budget_enabled: false,
             history_enabled: false,
             rule_enabled: false,
             exact_enabled: false,
@@ -59,8 +57,8 @@ pub struct DetectionReport {
     pub summary: DetectionSummary,
     pub metadata: ReportMetadata,
     pub observation: ObservationMetadata,
-    /// Optional SHA-256 fingerprint of the trajectory that led to this detection.
-    /// Populated by the orchestrator when loop fingerprinting is enabled.
+
+
     pub fingerprint: Option<LoopFingerprintHash>,
 }
 
@@ -100,7 +98,7 @@ impl DetectionReport {
         }
     }
 
-    /// Attach a loop fingerprint hash to this report.
+
     pub fn with_fingerprint(mut self, fingerprint: LoopFingerprintHash) -> Self {
         self.fingerprint = Some(fingerprint);
         self

@@ -34,5 +34,5 @@ if let Some(intervention) = wrapper.intercept_tool_call(
 |------------|-----------|
 | Retry |  |
 | Abort |  (resets step counter) |
-| InjectPrompt | ❌ |
-| ReplaceTool | ❌ |
+| InjectPrompt |  |
+| ReplaceTool |  |

@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 
 mod dashboard;
 
-use deadband_core::{Orchestrator, Replayer, VitalSigns};
+use deadband_core::{Orchestrator, Replayer};
 
 #[derive(Parser)]
 #[command(name = "deadband", about = "Execution runtime for AI agents")]
@@ -15,45 +15,45 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Check if Loopless is working
+
     Doctor {
-        /// Path to policy config
+
         #[arg(short, long, default_value = "deadband.yaml")]
         config: PathBuf,
     },
-    /// Start tracing execution
+
     Trace {
-        /// Path to policy config
+
         #[arg(short, long, default_value = "deadband.yaml")]
         config: PathBuf,
     },
-    /// Replay a saved trace
+
     Replay {
-        /// Path to trace file
+
         path: PathBuf,
     },
-    /// Inspect a trace in detail
+
     Inspect {
-        /// Path to trace file
+
         path: PathBuf,
     },
-    /// Visualize a trace as ASCII timeline
+
     Visualize {
-        /// Path to trace file
+
         path: PathBuf,
     },
-    /// Generate default deadband.yaml
+
     Init {
-        /// Output path
+
         #[arg(short, long, default_value = "deadband.yaml")]
         output: PathBuf,
     },
-    /// Show real-time agent vital signs dashboard
+
     Dashboard {
-        /// Path to policy config
+
         #[arg(short, long, default_value = "deadband.yaml")]
         config: PathBuf,
-        /// Print one-shot snapshot instead of interactive dashboard
+
         #[arg(long)]
         snapshot: bool,
     },
@@ -225,29 +225,12 @@ fn cmd_dashboard(config: &PathBuf, snapshot: bool) -> Result<(), anyhow::Error> 
     let orch = Orchestrator::from_yaml(&config_str)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    let vs = VitalSigns::from_recovery_metrics(orch.metrics());
+    let metrics = orch.metrics();
 
     if snapshot {
-        // One-shot snapshot mode
-        crate::dashboard::print_snapshot(&vs);
+        crate::dashboard::print_snapshot(metrics);
     } else {
-        // Interactive dashboard mode
-        let vs_clone = std::sync::Arc::new(std::sync::Mutex::new(vs));
-        let vs_ref = vs_clone.clone();
-
-        // Start a background thread to collect metrics
-        std::thread::spawn(move || {
-            // In a real scenario, this would poll the orchestrator periodically.
-            // For now, display the initial snapshot.
-            std::thread::sleep(std::time::Duration::from_secs(1));
-        });
-
-        // Run the dashboard with current metrics
-        if let Err(e) = crate::dashboard::run_dashboard(move || {
-            vs_ref.lock().unwrap().clone()
-        }) {
-            eprintln!("Dashboard error: {}", e);
-        }
+        eprintln!("Interactive dashboard not available. Use --snapshot for one-shot view.");
     }
 
     Ok(())

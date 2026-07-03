@@ -1,3 +1,4 @@
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -10,7 +11,6 @@ use deadband_observation::history::{HistoryStore, InMemoryHistoryStore};
 use deadband_observation::pipeline::{ObservationPipeline, PipelineConfig};
 use deadband_observation::report::DetectionReport;
 
-use crate::fingerprint::FingerprintStore;
 use crate::intervention::{AdapterCapabilities, Intervention};
 use crate::metrics::{MetricEvent, RecoveryMetrics};
 use crate::policy::PolicyEngine;
@@ -21,7 +21,6 @@ pub struct OrchestratorConfig {
     pub history_size: usize,
     pub enable_semantic: bool,
     pub enable_rules: bool,
-    pub enable_budget: bool,
     pub enable_exact: bool,
     pub error_threshold: u32,
     pub exact_threshold: u32,
@@ -33,7 +32,6 @@ impl Default for OrchestratorConfig {
             history_size: 100,
             enable_semantic: true,
             enable_rules: true,
-            enable_budget: true,
             enable_exact: true,
             error_threshold: 1,
             exact_threshold: 1,
@@ -47,7 +45,6 @@ pub struct Orchestrator {
     policy_engine: PolicyEngine,
     history_store: Box<dyn HistoryStore>,
     metrics: RecoveryMetrics,
-    fingerprint_store: Option<FingerprintStore>,
 }
 
 impl Orchestrator {
@@ -62,9 +59,6 @@ impl Orchestrator {
         if config.enable_exact {
             detectors.push(Box::new(ExactDetector::new()));
         }
-        if config.enable_budget {
-            detectors.push(Box::new(deadband_observation::detection::BudgetDetector::new()));
-        }
         if config.enable_semantic {
             detectors.push(Box::new(HistoryDetector::new()));
             let sidecar = SemanticSidecarClient::default();
@@ -75,7 +69,6 @@ impl Orchestrator {
         let execution_id = Uuid::new_v4();
         let pipeline_config = PipelineConfig {
             semantic_enabled: config.enable_semantic,
-            budget_enabled: config.enable_budget,
             exact_enabled: config.enable_exact,
             history_enabled: config.enable_semantic,
             rule_enabled: config.enable_rules,
@@ -90,7 +83,6 @@ impl Orchestrator {
             policy_engine,
             history_store,
             metrics: RecoveryMetrics::new(execution_id),
-            fingerprint_store: None,
         })
     }
 
@@ -131,9 +123,6 @@ impl Orchestrator {
         let report = self.pipeline.observe(event.clone(), &history);
         let mut intervention = None;
 
-        // Microloop-backed adaptive thresholding:
-        // When error detections exist, tighten thresholds automatically
-        // to force faster agent pivots (mirrors microloop-proxy behavior)
         let has_errors = report.detections.iter().any(|d| {
             matches!(d, deadband_observation::detection::Detection::ErrorPattern { .. })
         });
@@ -148,7 +137,7 @@ impl Orchestrator {
                 report: &report,
                 history: &history,
                 metrics: &self.metrics,
-                // Pass effective threshold via config context
+
                 config: &OrchestratorConfig {
                     exact_threshold: effective_threshold,
                     ..self.config.clone()
@@ -161,56 +150,12 @@ impl Orchestrator {
             }
         }
 
-        // Compute and attach fingerprint if detections found and fingerprint store is enabled
-        let report = if !report.detections.is_empty() {
-            if let Some(ref store) = self.fingerprint_store {
-                let trajectory: Vec<(String, String)> = history
-                    .iter()
-                    .map(|h| {
-                        let args = serde_json::to_string(&h.arguments).unwrap_or_default();
-                        (h.tool_name.clone(), args)
-                    })
-                    .collect();
-                let hash = FingerprintStore::compute_fingerprint(&trajectory);
-                let intervention_str = intervention.as_ref().map(|i| match i {
-                    Intervention::Abort { .. } => "abort",
-                    Intervention::Retry { .. } => "retry",
-                    Intervention::Backoff { .. } => "backoff",
-                    Intervention::InjectPrompt { .. } => "inject_prompt",
-                    Intervention::ReplaceTool { .. } => "replace_tool",
-                    Intervention::Continue => "continue",
-                    Intervention::Custom { .. } => "custom",
-                });
-                if let Err(e) = store.record_fingerprint(
-                    &hash,
-                    &trajectory,
-                    self.metrics.execution_id,
-                    intervention_str,
-                ) {
-                    tracing::warn!("Failed to record loop fingerprint: {}", e);
-                }
-                report.with_fingerprint(hash)
-            } else {
-                report
-            }
-        } else {
-            report
-        };
-
         self.history_store.push(event.clone());
 
         (
             intervention,
             if report.detections.is_empty() { None } else { Some(report) },
         )
-    }
-
-    /// Enable loop fingerprinting with the given SQLite-backed store.
-    /// When enabled, detected loops will be fingerprinted and stored for
-    /// later querying (see `deadband dashboard --snapshot`).
-    pub fn with_fingerprinting(mut self, store: FingerprintStore) -> Self {
-        self.fingerprint_store = Some(store);
-        self
     }
 
     pub fn metrics(&self) -> &RecoveryMetrics {
@@ -349,7 +294,7 @@ policies:
         orch.process(event.clone(), &AdapterCapabilities::default());
         orch.process(event.clone(), &AdapterCapabilities::default());
         let (intervention, report) = orch.process(event, &AdapterCapabilities::default());
-        
+
         if let (Some(report), Some(_intervention)) = (report, intervention) {
             orch.record_intervention_outcome(
                 &report,
@@ -357,7 +302,7 @@ policies:
                 None,
             );
         }
-        
+
         assert!(orch.metrics().intervention_count > 0);
     }
 }

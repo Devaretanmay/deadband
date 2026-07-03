@@ -1,3 +1,4 @@
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -145,7 +146,7 @@ pub enum Intervention {
     InjectPrompt {
         content: String,
         position: PromptPosition,
-        /// Optional prompt ID for A/B testing (gaslighter tracking)
+
         #[serde(skip_serializing_if = "Option::is_none")]
         prompt_id: Option<String>,
     },

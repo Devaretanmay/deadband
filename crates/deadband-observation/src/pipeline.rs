@@ -6,7 +6,6 @@ use uuid::Uuid;
 #[derive(Clone, Debug)]
 pub struct PipelineConfig {
     pub semantic_enabled: bool,
-    pub budget_enabled: bool,
     pub exact_enabled: bool,
     pub history_enabled: bool,
     pub rule_enabled: bool,
@@ -17,7 +16,6 @@ impl Default for PipelineConfig {
     fn default() -> Self {
         Self {
             semantic_enabled: true,
-            budget_enabled: true,
             exact_enabled: true,
             history_enabled: true,
             rule_enabled: true,
@@ -51,7 +49,6 @@ impl ObservationPipeline {
 
         let observation = ObservationMetadata {
             semantic_enabled: self.config.semantic_enabled,
-            budget_enabled: self.config.budget_enabled,
             history_enabled: self.config.history_enabled,
             rule_enabled: self.config.rule_enabled,
             exact_enabled: self.config.exact_enabled,

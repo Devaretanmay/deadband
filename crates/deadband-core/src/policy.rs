@@ -1,3 +1,4 @@
+
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -99,7 +100,7 @@ fn condition_matches(cond: &ConditionConfig, ctx: &ExecutionContext) -> bool {
             "semanticrepeat" => "semantic_repeat".to_string(),
             "ruleviolation" => "rule_violation".to_string(),
             "errorpattern" => "error_pattern".to_string(),
-            "budgetexceeded" => "budget_exceeded".to_string(),
+
             _ => s.to_string(),
         }
     };
@@ -302,17 +303,17 @@ policies:
     fn test_all_matches() {
         let yaml = r#"
 policies:
-  - name: "retry_timeout"
+  - name: "retry_on_both"
     when:
       all:
         - ErrorPattern
-        - BudgetExceeded
+        - ExactRepeat
     do:
       type: "Retry"
 "#;
         let engine = make_engine(yaml);
-        
-        // Only one detection - should fail
+
+
         let report_fail = make_report(vec![Detection::ErrorPattern {
             kind: ErrorKind::Timeout,
             count: 1,
@@ -328,16 +329,16 @@ policies:
         };
         assert!(engine.evaluate(&ctx_fail).is_none());
 
-        // Both detections - should match
+
         let report_pass = make_report(vec![
             Detection::ErrorPattern {
                 kind: ErrorKind::Timeout,
                 count: 1,
             },
-            Detection::BudgetExceeded {
-                budget: 10,
-                spent: 10,
-            }
+            Detection::ExactRepeat {
+                tool: "x".into(),
+                count: 1,
+            },
         ]);
         let ctx_pass = ExecutionContext {
             report: &report_pass,
@@ -361,8 +362,8 @@ policies:
       type: "InjectPrompt"
 "#;
         let engine = make_engine(yaml);
-        
-        // Count is 2 - should fail
+
+
         let report_fail = make_report(vec![Detection::ExactRepeat {
             tool: "x".into(),
             count: 2,
@@ -378,7 +379,7 @@ policies:
         };
         assert!(engine.evaluate(&ctx_fail).is_none());
 
-        // Count is 3 - should match
+
         let report_pass = make_report(vec![Detection::ExactRepeat {
             tool: "x".into(),
             count: 3,

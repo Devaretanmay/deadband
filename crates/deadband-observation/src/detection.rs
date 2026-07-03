@@ -1,3 +1,4 @@
+
 use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -23,10 +24,6 @@ pub enum Detection {
         kind: ErrorKind,
         count: u32,
     },
-    BudgetExceeded {
-        budget: u64,
-        spent: u64,
-    },
 }
 
 impl Detection {
@@ -36,7 +33,7 @@ impl Detection {
             Detection::SemanticRepeat { .. } => "semantic_repeat",
             Detection::RuleViolation { .. } => "rule_violation",
             Detection::ErrorPattern { .. } => "error_pattern",
-            Detection::BudgetExceeded { .. } => "budget_exceeded",
+
         }
     }
     pub fn intrinsic_severity_and_confidence(&self) -> (crate::report::Severity, f32) {
@@ -62,7 +59,7 @@ impl Detection {
                     (Severity::Medium, 1.0)
                 }
             },
-            Detection::BudgetExceeded { .. } => (Severity::Critical, 1.0),
+
         }
     }
 }
@@ -97,9 +94,9 @@ impl ExactDetector {
         self
     }
 
-    /// Enable or disable auto-inference of volatile fields.
-    /// When enabled (default), fields that change on every call (like req_id, timestamp)
-    /// are automatically detected and excluded from loop matching.
+
+
+
     pub fn with_auto_inference(mut self, enable: bool) -> Self {
         self.enable_auto_inference = enable;
         self
@@ -112,72 +109,53 @@ impl Detector for ExactDetector {
     }
 
     fn detect(&self, event: &ToolCallEvent, history: &[ToolCallEvent]) -> Option<Detection> {
-        // Delegate to microloop::HistoryTracker for battle-tested loop detection
-        let mut tracker = microloop::history::HistoryTracker::new();
-
-        // Convert volatile_fields to microloop-style dot-notation paths
-        let microloop_paths: Vec<String> = self.volatile_fields.iter()
+        let mut all_paths: Vec<String> = self.volatile_fields.iter()
             .map(|f| format!(".{}", f))
             .collect();
-
-        // Auto-infer additional volatile fields using microloop's algorithm
-        // Only runs when auto-inference is enabled (default: true)
-        let mut all_paths = microloop_paths.clone();
         if self.enable_auto_inference {
-            let history_refs: Vec<(&str, &Value)> = history
-                .iter()
+            let history_refs: Vec<(&str, &Value)> = history.iter()
                 .map(|h| (h.tool_name.as_str(), &h.arguments))
                 .collect();
             let auto_fields = auto_infer_volatile_fields(
-                &event.arguments,
-                &history_refs,
-                &event.tool_name,
-                2,
+                &event.arguments, &history_refs, &event.tool_name, 2,
             );
             for f in &auto_fields {
                 all_paths.push(format!(".{}", f));
             }
         }
 
-        // Replay history into microloop's tracker with volatile field stripping
-        for h in history {
-            let mut h_val = h.arguments.clone();
-            if !all_paths.is_empty() {
-                canonical_strip(&mut h_val, &all_paths);
-            }
-            let h_args = serde_json::to_string(&h_val).unwrap_or_default();
-            tracker.call_history.push((h.tool_name.clone(), h_args));
-        }
-
-        // Strip volatile fields from current event
         let mut event_val = event.arguments.clone();
         if !all_paths.is_empty() {
             canonical_strip(&mut event_val, &all_paths);
         }
-        let event_args = serde_json::to_string(&event_val).unwrap_or_default();
 
-        // Count matches using microloop's history (with stripped fields)
-        let count = tracker.call_history.iter()
-            .filter(|(t, a)| {
-                t == &event.tool_name && (self.ignore_args || a == &event_args)
+        let count = 1 + history.iter()
+            .filter(|h| {
+                h.tool_name == event.tool_name
+                    && (self.ignore_args || {
+                        let mut h_val = h.arguments.clone();
+                        if !all_paths.is_empty() {
+                            canonical_strip(&mut h_val, &all_paths);
+                        }
+                        h_val == event_val
+                    })
             })
-            .count() as u32
-            + 1;
+            .count();
 
         Some(Detection::ExactRepeat {
             tool: event.tool_name.clone(),
-            count,
+            count: count as u32,
         })
     }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SidecarShadowMetrics {
-    /// Number of times the sidecar was unreachable
+
     pub sidecar_unavailable_count: u64,
-    /// Number of potential semantic loops missed while in shadow mode
+
     pub shadow_loops_missed: u64,
-    /// Whether shadow mode is currently active
+
     pub shadow_mode_active: bool,
 }
 
@@ -224,7 +202,7 @@ impl SemanticSidecarClient {
         self
     }
 
-    /// Returns the current shadow metrics.
+
     pub fn shadow_metrics(&self) -> SidecarShadowMetrics {
         self.shadow_metrics.lock().unwrap().clone()
     }
@@ -246,7 +224,7 @@ impl SemanticSidecarClient {
         match resp {
             Ok(resp) => {
                 if !resp.status().is_success() {
-                    // Sidecar returned an error — enter shadow mode
+
                     tracing::warn!(
                         "Semantic sidecar returned status {} — entering shadow mode (exact detection fallback)",
                         resp.status()
@@ -256,8 +234,8 @@ impl SemanticSidecarClient {
                 }
                 let body: Value = resp.json().ok()?;
                 let loop_detected = body.get("loop_detected").and_then(|v| v.as_bool());
-                
-                // If we were in shadow mode and sidecar is back, log recovery
+
+
                 {
                     let mut metrics = self.shadow_metrics.lock().unwrap();
                     if metrics.shadow_mode_active {
@@ -265,11 +243,11 @@ impl SemanticSidecarClient {
                         metrics.reset();
                     }
                 }
-                
+
                 loop_detected
             }
             Err(e) => {
-                // Sidecar is unreachable — enter shadow mode, warn once
+
                 let mut metrics = self.shadow_metrics.lock().unwrap();
                 if !metrics.shadow_mode_active {
                     tracing::warn!(
@@ -304,12 +282,12 @@ impl SemanticDetector {
         reqwest::blocking::get(&url).is_ok()
     }
 
-    /// Returns shadow metrics tracking sidecar availability and missed loops.
+
     pub fn shadow_metrics(&self) -> SidecarShadowMetrics {
         self.sidecar.shadow_metrics()
     }
 
-    /// Check if the sidecar is currently in shadow mode (unreachable).
+
     pub fn is_shadow_mode(&self) -> bool {
         self.sidecar.shadow_metrics.lock().unwrap().shadow_mode_active
     }
@@ -328,18 +306,18 @@ impl Detector for SemanticDetector {
 
         match loop_detected {
             Some(true) => {
-                // Sidecar detected a semantic loop — return detection
+
                 Some(Detection::SemanticRepeat {
                     tool: event.tool_name.clone(),
                     similarity: self.sidecar.threshold,
                 })
             }
             Some(false) => {
-                // No loop detected by sidecar
+
                 None
             }
             None => {
-                // Sidecar unavailable — shadow mode active, fall back to exact detection
+
                 None
             }
         }
@@ -406,7 +384,7 @@ impl CompiledRule {
 
     pub fn matches(&self, event: &ToolCallEvent) -> Result<(), String> {
         match self {
-            // Delegate Regex/Exact/JsonSchema to microloop's compiled rules
+
             CompiledRule::Regex { pattern, .. } => {
                 let mc_rule = microloop::engine::CompiledRule::Regex(pattern.clone());
                 let args_str = serde_json::to_string(&event.arguments).unwrap_or_default();
@@ -429,7 +407,7 @@ impl CompiledRule {
                 let args_str = serde_json::to_string(&event.arguments).unwrap_or_default();
                 mc_rule.matches(&args_str).map_err(|e| format!("JSON schema: {}", e))
             }
-            // ToolName is Loopless-specific — handle natively
+
             CompiledRule::ToolName { blocked, .. } => {
                 if blocked.contains(&event.tool_name) {
                     Err(format!("Tool blocked: {}", event.tool_name))
@@ -466,28 +444,6 @@ impl Detector for HistoryDetector {
         Some(Detection::ErrorPattern {
             kind,
             count,
-        })
-    }
-}
-
-pub struct BudgetDetector;
-
-impl BudgetDetector {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl Detector for BudgetDetector {
-    fn name(&self) -> &str {
-        "budget"
-    }
-
-    fn detect(&self, _event: &ToolCallEvent, history: &[ToolCallEvent]) -> Option<Detection> {
-        let spent = history.len() as u64 + 1;
-        Some(Detection::BudgetExceeded {
-            budget: 0, // removed configuration from observation
-            spent,
         })
     }
 }
@@ -574,24 +530,6 @@ mod tests {
         } else {
             panic!("Expected ErrorPattern");
         }
-    }
-
-    #[test]
-    fn test_budget_detector() {
-        let detector = BudgetDetector::new();
-        let event = make_tool("x", json!({}));
-        let history = vec![make_tool("x", json!({})), make_tool("x", json!({}))];
-        let detection = detector.detect(&event, &history);
-        assert!(detection.is_some());
-        assert_eq!(detection.unwrap().kind(), "budget_exceeded");
-    }
-
-    #[test]
-    fn test_budget_detector_under() {
-        let detector = BudgetDetector::new();
-        let event = make_tool("x", json!({}));
-        let history = vec![make_tool("x", json!({}))];
-        assert!(detector.detect(&event, &history).is_some());
     }
 
     #[test]

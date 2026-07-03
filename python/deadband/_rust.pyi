@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple
 
 
 class Orchestrator:
@@ -9,7 +9,7 @@ class Orchestrator:
         step: int,
         tool_name: str,
         arguments: str,
-    ) -> Optional[Intervention]: ...
+    ) -> Tuple[Optional[Intervention], Optional[DetectionReport]]: ...
     def get_metrics(self) -> RecoveryMetrics: ...
 
 
@@ -22,6 +22,9 @@ class Intervention:
     def reason(self) -> Optional[str]: ...
     def delay_ms(self) -> Optional[int]: ...
     def prompt_content(self) -> Optional[str]: ...
+
+
+class DetectionReport: ...
 
 
 class RecoveryMetrics:

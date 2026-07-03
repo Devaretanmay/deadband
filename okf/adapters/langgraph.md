@@ -43,5 +43,5 @@ if let Some(intervention) = middleware.wrap_tool_call(
 |------------|-----------|
 | Retry |  |
 | Abort |  |
-| InjectPrompt | ❌ (downgraded to Abort) |
-| ReplaceTool | ❌ (downgraded to Abort) |
+| InjectPrompt |  (downgraded to Abort) |
+| ReplaceTool |  (downgraded to Abort) |
