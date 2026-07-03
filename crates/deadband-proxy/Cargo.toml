@@ -12,8 +12,8 @@ name = "deadband"
 path = "src/main.rs"
 
 [dependencies]
-deadband-core = { path = "../deadband-core" }
-deadband-observation = { path = "../deadband-observation" }
+deadband-core = { path = "../deadband-core", version = "0.1" }
+deadband-observation = { path = "../deadband-observation", version = "0.1" }
 
 clap = { version = "4", features = ["derive"] }
 serde.workspace = true

@@ -8,7 +8,7 @@ homepage = "https://github.com/Devaretanmay/deadband"
 description = "Core orchestrator, policy engine, intervention, and replay for Deadband"
 
 [dependencies]
-deadband-observation = { path = "../deadband-observation" }
+deadband-observation = { path = "../deadband-observation", version = "0.1" }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true

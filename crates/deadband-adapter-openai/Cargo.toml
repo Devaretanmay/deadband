@@ -8,5 +8,5 @@ homepage = "https://github.com/Devaretanmay/deadband"
 description = "Deadband integration adapter for OpenAI Agents SDK"
 
 [dependencies]
-deadband-core = { path = "../deadband-core" }
+deadband-core = { path = "../deadband-core", version = "0.1" }
 serde_json.workspace = true
