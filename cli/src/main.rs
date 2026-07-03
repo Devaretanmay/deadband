@@ -74,7 +74,7 @@ fn main() -> Result<(), anyhow::Error> {
 }
 
 fn cmd_doctor(config: &PathBuf) -> Result<(), anyhow::Error> {
-    println!("Loopless Doctor");
+    println!("Deadband Doctor");
     println!("===============");
 
     let config_str = match std::fs::read_to_string(config) {
@@ -118,7 +118,7 @@ fn cmd_trace(config: &PathBuf) -> Result<(), anyhow::Error> {
     let mut orch = Orchestrator::from_yaml(&config_str)
         .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-    println!("Loopless Trace — reading events from stdin (JSON lines)");
+    println!("Deadband Trace — reading events from stdin (JSON lines)");
     println!("Press Ctrl+C to stop");
     println!();
 

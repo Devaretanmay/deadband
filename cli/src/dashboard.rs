@@ -120,7 +120,7 @@ where
         // Header
         let header = Block::default()
             .borders(Borders::ALL)
-            .title(" Loopless Agent Vital Signs ")
+            .title(" Deadband Agent Vital Signs ")
             .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
         let header_text = Paragraph::new(Line::from(vec![
             Span::styled("q/ESC ", Style::default().fg(Color::DarkGray)),
@@ -149,7 +149,7 @@ where
         let loop_gauge = Gauge::default()
             .block(loop_block)
             .gauge_style(Style::default().fg(Color::Red).bg(Color::Black))
-            .percent((vs.loop_count.min(100) as u16))
+            .percent(vs.loop_count.min(100) as u16)
             .label(format!("{}", vs.loop_count));
         frame.render_widget(loop_gauge, metric_areas[0]);
 
@@ -257,7 +257,7 @@ where
 
 pub fn print_snapshot(vs: &VitalSigns) {
     println!("╔══════════════════════════════════════╗");
-    println!("║     Loopless Agent Vital Signs       ║");
+    println!("║     Deadband Agent Vital Signs       ║");
     println!("╠══════════════════════════════════════╣");
     println!("║  Loops Detected:      {:>6}        ║", vs.loop_count);
     println!("║  Avg Detection Time:  {:>6.1}ms     ║", vs.avg_detection_time_ms);

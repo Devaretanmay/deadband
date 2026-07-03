@@ -1205,8 +1205,6 @@ dependencies = [
 [[package]]
 name = "microloop"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "829eac7cff1c7ec50e21eb27a15da10f5c2531f56506f24c9a1d5834cf34fbeb"
 dependencies = [
  "cbindgen",
  "regex",
