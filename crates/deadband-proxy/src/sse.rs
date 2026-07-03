@@ -53,12 +53,22 @@ impl SseProcessor {
         match self.state {
             ProcessorState::Buffering => {
                 // Forward the chunk immediately so the client doesn't stall,
-                // but also buffer it for analysis.
+                // but also buffer it for replay (if intervention found later).
                 self.buffer.push_back(chunk.clone());
+
+                // Scan every chunk for tool calls as it arrives — don't wait
+                // for the buffer to fill, which may never happen (flush case)
+                // or may miss tool calls that arrive after content deltas.
+                if let Some(orch) = orchestrator {
+                    self.scan_chunk_for_tool_calls(&chunk, orch, thread_id);
+                }
+
                 if self.buffer.len() >= self.buffer_size {
-                    // Buffer is full — analyze for tool calls
+                    // Buffer is full — set up replay/injection state.
+                    // Tool calls were already processed per-chunk above,
+                    // so analyze() only needs to configure buffer replay.
                     self.state = ProcessorState::Analyzing;
-                    self.analyze(orchestrator, thread_id);
+                    self.analyze_for_replay();
 
                     if !self.injection_frames.is_empty() {
                         // Intervention found — replay buffer with injection frames
@@ -102,54 +112,45 @@ impl SseProcessor {
                     self.state = ProcessorState::Injecting { frame_index: next };
                     Some(self.injection_frames[frame_index].clone())
                 } else if next == self.injection_frames.len() {
+                    // Last injection frame emitted — clear so flush()
+                    // doesn't re-emit frames that were already sent.
                     let last = self.injection_frames[frame_index].clone();
+                    self.injection_frames.clear();
                     self.state = ProcessorState::Streaming;
                     Some(last)
                 } else {
+                    self.injection_frames.clear();
                     self.state = ProcessorState::Streaming;
                     Some(chunk)
                 }
             }
-            ProcessorState::Streaming => Some(chunk),
+            ProcessorState::Streaming => {
+                // Continuously scan for tool calls even after the buffering phase.
+                // Tool call SSE deltas often arrive after several content-delta chunks,
+                // so waiting for buffer to fill would miss them entirely.
+                if let Some(orch) = orchestrator {
+                    self.scan_chunk_for_tool_calls(&chunk, orch, thread_id);
+                }
+                // If scan_chunk_for_tool_calls generated injection frames, emit them
+                // immediately rather than leaving them unsent (the client already got
+                // the original chunks, so we inject the intervention now).
+                if !self.injection_frames.is_empty() {
+                    let frame = self.injection_frames[0].clone();
+                    self.state = ProcessorState::Injecting { frame_index: 1 };
+                    return Some(frame);
+                }
+                Some(chunk)
+            }
             ProcessorState::Done => None,
         }
     }
 
-    fn analyze(
-        &mut self,
-        orchestrator: Option<&mut Orchestrator>,
-        thread_id: &str,
-    ) -> Option<Bytes> {
-        let tool_calls = self.extract_tool_calls_from_buffer();
-
-        if let Some(orch) = orchestrator {
-            for (tool_name, arguments) in &tool_calls {
-                let event = deadband_core::ToolCallEvent::started(
-                    thread_id,
-                    0,
-                    tool_name,
-                    serde_json::from_str(arguments).unwrap_or_default(),
-                );
-                let (intervention, _report) = orch.process(
-                    event,
-                    &deadband_core::AdapterCapabilities {
-                        retry: true,
-                        inject_prompt: true,
-                        abort: true,
-                        ..Default::default()
-                    },
-                );
-
-                if let Some(intv) = intervention {
-                    if let Some(prompt) = intv.prompt_content() {
-                        self.injection_frames.push(make_intervention_sse_openai(prompt));
-                    }
-                    self.intervention = Some(intv);
-                    break;
-                }
-            }
-        }
-
+    /// Configure the processor for replay mode after the buffer has filled
+    /// (or on flush). Tool call extraction and orchestrator processing is done
+    /// per-chunk in `push_chunk` (both Buffering and Streaming states), so
+    /// this only transitions state and returns the first buffer chunk for
+    /// replay — it does NOT re-call the orchestrator.
+    fn analyze_for_replay(&mut self) -> Option<Bytes> {
         let total = self.buffer.len();
         if total > 0 {
             let first = self.buffer[0].clone();
@@ -158,6 +159,113 @@ impl SseProcessor {
         } else {
             self.state = ProcessorState::Streaming;
             None
+        }
+    }
+
+    /// Scan a single SSE chunk for tool call deltas and forward them to the
+    /// orchestrator. This is called from the `Streaming` state to catch tool
+    /// calls that arrive after the initial buffer fills with content chunks.
+    fn scan_chunk_for_tool_calls(
+        &mut self,
+        chunk: &Bytes,
+        orchestrator: &mut Orchestrator,
+        thread_id: &str,
+    ) {
+        let text = String::from_utf8_lossy(chunk);
+        for line in text.lines() {
+            if let Some(data) = line.strip_prefix("data: ") {
+                if data == "[DONE]" {
+                    continue;
+                }
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+                    self.process_tool_call_json(&val, orchestrator, thread_id);
+                }
+            }
+        }
+    }
+
+    /// Common logic to extract tool calls from a parsed SSE JSON value and
+    /// forward them to the orchestrator. Handles both OpenAI and Anthropic
+    /// streaming formats.
+    fn process_tool_call_json(
+        &mut self,
+        val: &serde_json::Value,
+        orchestrator: &mut Orchestrator,
+        thread_id: &str,
+    ) {
+        // OpenAI format: choices[].delta.tool_calls[].function
+        if let Some(choices) = val.get("choices").and_then(|c| c.as_array()) {
+            for choice in choices {
+                if let Some(delta) = choice.get("delta") {
+                    if let Some(tool_calls) = delta.get("tool_calls").and_then(|t| t.as_array()) {
+                        for tc in tool_calls {
+                            if let Some(func) = tc.get("function") {
+                                let name = func.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                                if !name.is_empty() {
+                                    let args = func.get("arguments").and_then(|a| a.as_str()).unwrap_or("");
+                                    let event = deadband_core::ToolCallEvent::started(
+                                        thread_id,
+                                        0,
+                                        name,
+                                        serde_json::from_str(args).unwrap_or_default(),
+                                    );
+                                    let (intervention, _report) = orchestrator.process(
+                                        event,
+                                        &deadband_core::AdapterCapabilities {
+                                            retry: true,
+                                            inject_prompt: true,
+                                            abort: true,
+                                            ..Default::default()
+                                        },
+                                    );
+                                    if let Some(intv) = intervention {
+                                        if let Some(prompt) = intv.prompt_content() {
+                                            self.injection_frames
+                                                .push(make_intervention_sse_openai(prompt));
+                                        }
+                                        self.intervention = Some(intv);
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Anthropic format: content[].type == "tool_use"
+        if let Some(content) = val.get("content").and_then(|c| c.as_array()) {
+            for block in content {
+                if block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
+                    let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("");
+                    if !name.is_empty() {
+                        let input = block.get("input").cloned().unwrap_or_default();
+                        let event = deadband_core::ToolCallEvent::started(
+                            thread_id,
+                            0,
+                            name,
+                            input,
+                        );
+                        let (intervention, _report) = orchestrator.process(
+                            event,
+                            &deadband_core::AdapterCapabilities {
+                                retry: true,
+                                inject_prompt: true,
+                                abort: true,
+                                ..Default::default()
+                            },
+                        );
+                        if let Some(intv) = intervention {
+                            if let Some(prompt) = intv.prompt_content() {
+                                self.injection_frames
+                                    .push(make_intervention_sse_openai(prompt));
+                            }
+                            self.intervention = Some(intv);
+                            return;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -233,9 +341,10 @@ impl SseProcessor {
                     return None;
                 }
                 self.state = ProcessorState::Analyzing;
-                self.analyze(orchestrator, thread_id);
-                // Chunks were already forwarded during buffering, so only
-                // replay if there's an intervention with injection frames.
+                self.analyze_for_replay();
+                // Chunks were already forwarded during buffering (and tool calls
+                // were already processed per-chunk), so only replay if there's
+                // an intervention with injection frames.
                 if !self.injection_frames.is_empty() {
                     let total = self.buffer.len();
                     let first = self.buffer[0].clone();
@@ -266,6 +375,12 @@ impl SseProcessor {
                 None
             }
             ProcessorState::Streaming => {
+                // If injection frames were generated during streaming (tool call
+                // detected after buffer fill), emit them as a safety net.
+                if !self.injection_frames.is_empty() {
+                    self.state = ProcessorState::Injecting { frame_index: 0 };
+                    return self.emit_next_injection();
+                }
                 self.state = ProcessorState::Done;
                 None
             }
@@ -282,9 +397,11 @@ impl SseProcessor {
                 Some(frame)
             } else if next == self.injection_frames.len() {
                 let frame = self.injection_frames[frame_index].clone();
+                self.injection_frames.clear();
                 self.state = ProcessorState::Done;
                 Some(frame)
             } else {
+                self.injection_frames.clear();
                 self.state = ProcessorState::Done;
                 None
             }
