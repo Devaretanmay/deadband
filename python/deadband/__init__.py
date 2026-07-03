@@ -1,25 +1,8 @@
-from ._rust import Orchestrator as _Orchestrator
-from ._rust import Intervention as _Intervention
-from ._rust import RecoveryMetrics as _RecoveryMetrics
-from ._rust import DetectionReport as _DetectionReport
-from typing import Optional, Tuple
+# Deadband - Phase 1: Simple Python package
+# For now, just a placeholder. The main functionality is in the CLI.
 
-class Orchestrator:
-    def __init__(self, config_path: str):
-        with open(config_path) as f:
-            self._inner = _Orchestrator(f.read())
+__version__ = "0.1.0"
 
-    def process(
-        self,
-        thread_id: str,
-        step: int,
-        tool_name: str,
-        arguments: str,
-    ) -> Tuple[Optional[_Intervention], Optional[_DetectionReport]]:
-        return self._inner.process(thread_id, step, tool_name, arguments)
 
-    @property
-    def metrics(self) -> _RecoveryMetrics:
-        return self._inner.get_metrics()
-
-__all__ = ["Orchestrator"]
+def get_version():
+    return __version__

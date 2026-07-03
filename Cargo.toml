@@ -1,34 +1,35 @@
-[workspace]
-resolver = "2"
-members = [
-    "crates/deadband-core",
-    "crates/deadband-observation",
-    "crates/deadband-adapter-langgraph",
-    "crates/deadband-adapter-crewai",
-    "crates/deadband-adapter-openai",
-    "cli",
-    "crates/deadband-proxy",
-    "python/deadband",
-]
-
-[workspace.package]
+[package]
+name = "deadband"
 version = "0.1.0"
-edition = "2024"
-license = "Apache-2.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/Devaretanmay/deadband"
+homepage = "https://github.com/Devaretanmay/deadband"
+description = "Stop your AI agents from looping - simple loop detection proxy"
 
-[patch.crates-io]
-microloop = { path = "../microloop" }
+[[bin]]
+name = "deadband"
+path = "src/main.rs"
 
-[workspace.dependencies]
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+reqwest = { version = "0.12", features = ["json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_yaml = "0.9"
-uuid = { version = "1", features = ["v4", "serde"] }
-thiserror = "2"
-tokio = { version = "1", features = ["full"] }
-chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
-reqwest = { version = "0.12", features = ["json", "blocking"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 anyhow = "1"
-pyo3 = { version = "0.22", features = ["extension-module"] }
-microloop = "0.2"
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "5"
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+default = []
