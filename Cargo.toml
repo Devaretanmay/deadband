@@ -1,13 +1,14 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/loopless-core",
-    "crates/loopless-observation",
-    "crates/loopless-adapter-langgraph",
-    "crates/loopless-adapter-crewai",
-    "crates/loopless-adapter-openai",
+    "crates/deadband-core",
+    "crates/deadband-observation",
+    "crates/deadband-adapter-langgraph",
+    "crates/deadband-adapter-crewai",
+    "crates/deadband-adapter-openai",
     "cli",
-    "python/loopless",
+    "crates/deadband-proxy",
+    "python/deadband",
 ]
 
 [workspace.package]

@@ -1,0 +1,16 @@
+[package]
+name = "deadband-python"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Python bindings for Loopless — Rust-powered agent execution runtime"
+
+[lib]
+name = "deadband"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+deadband-core = { path = "../../crates/deadband-core" }
+pyo3.workspace = true
+serde_json.workspace = true

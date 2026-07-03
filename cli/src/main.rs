@@ -1,10 +1,13 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use loopless_core::{Orchestrator, Replayer};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+mod dashboard;
+
+use deadband_core::{Orchestrator, Replayer, VitalSigns};
 
 #[derive(Parser)]
-#[command(name = "loopless", about = "Execution runtime for AI agents")]
+#[command(name = "deadband", about = "Execution runtime for AI agents")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -15,13 +18,13 @@ enum Commands {
     /// Check if Loopless is working
     Doctor {
         /// Path to policy config
-        #[arg(short, long, default_value = "loopless.yaml")]
+        #[arg(short, long, default_value = "deadband.yaml")]
         config: PathBuf,
     },
     /// Start tracing execution
     Trace {
         /// Path to policy config
-        #[arg(short, long, default_value = "loopless.yaml")]
+        #[arg(short, long, default_value = "deadband.yaml")]
         config: PathBuf,
     },
     /// Replay a saved trace
@@ -39,11 +42,20 @@ enum Commands {
         /// Path to trace file
         path: PathBuf,
     },
-    /// Generate default loopless.yaml
+    /// Generate default deadband.yaml
     Init {
         /// Output path
-        #[arg(short, long, default_value = "loopless.yaml")]
+        #[arg(short, long, default_value = "deadband.yaml")]
         output: PathBuf,
+    },
+    /// Show real-time agent vital signs dashboard
+    Dashboard {
+        /// Path to policy config
+        #[arg(short, long, default_value = "deadband.yaml")]
+        config: PathBuf,
+        /// Print one-shot snapshot instead of interactive dashboard
+        #[arg(long)]
+        snapshot: bool,
     },
 }
 
@@ -57,6 +69,7 @@ fn main() -> Result<(), anyhow::Error> {
         Commands::Inspect { path } => cmd_inspect(&path),
         Commands::Visualize { path } => cmd_visualize(&path),
         Commands::Init { output } => cmd_init(&output),
+        Commands::Dashboard { config, snapshot } => cmd_dashboard(&config, snapshot),
     }
 }
 
@@ -68,7 +81,7 @@ fn cmd_doctor(config: &PathBuf) -> Result<(), anyhow::Error> {
         Ok(s) => s,
         Err(e) => {
             eprintln!("  Config: FAIL ({})", e);
-            eprintln!("  Run `loopless init` to create a default config");
+            eprintln!("  Run `deadband init` to create a default config");
             std::process::exit(1);
         }
     };
@@ -114,20 +127,20 @@ fn cmd_trace(config: &PathBuf) -> Result<(), anyhow::Error> {
         if line.trim().is_empty() {
             continue;
         }
-        match serde_json::from_str::<loopless_core::ToolCallEvent>(&line) {
+        match serde_json::from_str::<deadband_core::ToolCallEvent>(&line) {
             Ok(event) => {
                 let step = event.step;
                 let (intervention, _snapshot) =
-                    orch.process_with_snapshot(event, &loopless_core::AdapterCapabilities::default());
+                    orch.process_with_snapshot(event, &deadband_core::AdapterCapabilities::default());
                 if let Some(intervention) = intervention {
                     let kind = match intervention {
-                        loopless_core::Intervention::Continue => "continue",
-                        loopless_core::Intervention::Retry { .. } => "retry",
-                        loopless_core::Intervention::Backoff { .. } => "backoff",
-                        loopless_core::Intervention::ReplaceTool { .. } => "replace_tool",
-                        loopless_core::Intervention::InjectPrompt { .. } => "inject_prompt",
-                        loopless_core::Intervention::Abort { .. } => "abort",
-                        loopless_core::Intervention::Custom { .. } => "custom",
+                        deadband_core::Intervention::Continue => "continue",
+                        deadband_core::Intervention::Retry { .. } => "retry",
+                        deadband_core::Intervention::Backoff { .. } => "backoff",
+                        deadband_core::Intervention::ReplaceTool { .. } => "replace_tool",
+                        deadband_core::Intervention::InjectPrompt { .. } => "inject_prompt",
+                        deadband_core::Intervention::Abort { .. } => "abort",
+                        deadband_core::Intervention::Custom { .. } => "custom",
                     };
                     println!("[{}] Intervention: {}", step, kind);
                 }
@@ -166,9 +179,9 @@ fn cmd_inspect(path: &PathBuf) -> Result<(), anyhow::Error> {
     println!("Events:");
     for (i, event) in trace.events.iter().enumerate() {
         let status = match event.payload {
-            loopless_core::Payload::Started { .. } => "STARTED",
-            loopless_core::Payload::Succeeded { .. } => "OK",
-            loopless_core::Payload::Failed { .. } => "FAILED",
+            deadband_core::Payload::Started { .. } => "STARTED",
+            deadband_core::Payload::Succeeded { .. } => "OK",
+            deadband_core::Payload::Failed { .. } => "FAILED",
         };
         println!("  {:3}. [{}] {} {}", i, status, event.tool_name, event.arguments);
     }
@@ -191,9 +204,9 @@ fn cmd_visualize(path: &PathBuf) -> Result<(), anyhow::Error> {
         let label = event.tool_name.to_string();
         let label_len = label.len().min(timeline_len.saturating_sub(10));
         let dot = match event.payload {
-            loopless_core::Payload::Started { .. } => '.',
-            loopless_core::Payload::Succeeded { .. } => '+',
-            loopless_core::Payload::Failed { .. } => 'x',
+            deadband_core::Payload::Started { .. } => '.',
+            deadband_core::Payload::Succeeded { .. } => '+',
+            deadband_core::Payload::Failed { .. } => 'x',
         };
 
         let has_intervention = trace.interventions.iter().any(|r| r.event_index == i);
@@ -207,8 +220,41 @@ fn cmd_visualize(path: &PathBuf) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+fn cmd_dashboard(config: &PathBuf, snapshot: bool) -> Result<(), anyhow::Error> {
+    let config_str = std::fs::read_to_string(config)?;
+    let orch = Orchestrator::from_yaml(&config_str)
+        .map_err(|e| anyhow::anyhow!("{}", e))?;
+
+    let vs = VitalSigns::from_recovery_metrics(orch.metrics());
+
+    if snapshot {
+        // One-shot snapshot mode
+        crate::dashboard::print_snapshot(&vs);
+    } else {
+        // Interactive dashboard mode
+        let vs_clone = std::sync::Arc::new(std::sync::Mutex::new(vs));
+        let vs_ref = vs_clone.clone();
+
+        // Start a background thread to collect metrics
+        std::thread::spawn(move || {
+            // In a real scenario, this would poll the orchestrator periodically.
+            // For now, display the initial snapshot.
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        });
+
+        // Run the dashboard with current metrics
+        if let Err(e) = crate::dashboard::run_dashboard(move || {
+            vs_ref.lock().unwrap().clone()
+        }) {
+            eprintln!("Dashboard error: {}", e);
+        }
+    }
+
+    Ok(())
+}
+
 fn cmd_init(output: &PathBuf) -> Result<(), anyhow::Error> {
-    let default_config = include_str!("../../loopless.yaml");
+    let default_config = include_str!("../../deadband.yaml");
     if output.exists() {
         eprintln!("{} already exists — not overwriting", output.display());
         std::process::exit(1);

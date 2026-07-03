@@ -1,20 +1,20 @@
-# Loopless
+# Deadband
 
 **Execution runtime for AI agents — detect loops, intervene intelligently, recover execution.**
 
-Loopless sits between AI agents and their tools, observing every tool call and deciding whether execution should continue, adapt, or stop. It combines the **Microloop** battle-tested detection engine (460ns per check) with a rich intervention layer (retry, backoff, replace tool, inject prompt, abort).
+Deadband sits between AI agents and their tools, observing every tool call and deciding whether execution should continue, adapt, or stop. It combines the **Microloop** battle-tested detection engine (460ns per check) with a rich intervention layer (retry, backoff, replace tool, inject prompt, abort).
 
 ## Quick Start
 
 ```bash
-pip install loopless
+pip install deadband
 ```
 
 ```python
-from loopless import Orchestrator, canonicalize_args
+from deadband import Orchestrator, canonicalize_args
 
 # Initialize with a YAML policy file
-orchestrator = Orchestrator("loopless.yaml")
+orchestrator = Orchestrator("deadband.yaml")
 
 # Process a tool call — returns an Intervention if loop detected
 intervention = orchestrator.process(
@@ -73,10 +73,10 @@ print(f"Cleaned args: {cleaned}")  # {"query":"hello"}
 ## Key Features
 
 ### ⚡ Microloop-Powered Detection
-Loopless imports [Microloop](https://github.com/Devaretanmay/microloop) as its detection backend. The `ExactDetector` delegates to `microloop::HistoryTracker` for **460ns** loop detection, and `RuleDetector` delegates Regex/Exact/JsonSchema matching to `microloop::engine::CompiledRule`.
+Deadband imports [Microloop](https://github.com/Devaretanmay/microloop) as its detection backend. The `ExactDetector` delegates to `microloop::HistoryTracker` for **460ns** loop detection, and `RuleDetector` delegates Regex/Exact/JsonSchema matching to `microloop::engine::CompiledRule`.
 
 ### 🧠 Auto-Inference of Volatile Fields
-Fields like `req_id`, `timestamp`, or `session_token` that change on every call can fool naive detectors. Loopless's `ExactDetector` automatically detects these high-entropy fields and excludes them from comparison — catching loops that would otherwise slip through.
+Fields like `req_id`, `timestamp`, or `session_token` that change on every call can fool naive detectors. Deadband's `ExactDetector` automatically detects these high-entropy fields and excludes them from comparison — catching loops that would otherwise slip through.
 
 ```python
 # Auto-inference works automatically. Disable with:
@@ -86,7 +86,7 @@ cleaned = canonicalize_args('{"query": "python", "req_id": 42}', ["req_id"])
 ```
 
 ### 📡 Semantic Detection (Optional Sidecar)
-An optional sidecar server (`microloop-semantic`) provides intent-based loop detection using BERT embeddings. When the sidecar is unreachable, Loopless enters **shadow mode** — logging warnings, falling back to exact-only detection, and tracking metrics so you know what you're missing.
+An optional sidecar server (`microloop-semantic`) provides intent-based loop detection using BERT embeddings. When the sidecar is unreachable, Deadband enters **shadow mode** — logging warnings, falling back to exact-only detection, and tracking metrics so you know what you're missing.
 
 ### 📋 Policy Engine
 Define loop intervention rules in a YAML file — no recompilation needed:
@@ -123,36 +123,112 @@ policies:
 ```
 
 ### 🔄 Adaptive Thresholding
-When error patterns are detected, Loopless automatically tightens the repeat threshold (e.g., 3 → 2), forcing agents to pivot faster when they're stuck in a failing pattern. This mirrors Microloop's proxy behavior.
+When error patterns are detected, Deadband automatically tightens the repeat threshold (e.g., 3 → 2), forcing agents to pivot faster when they're stuck in a failing pattern. This mirrors Microloop's proxy behavior.
 
 ### 📊 Trace & Replay
 Every execution can be saved as a versioned JSON trace for later debugging:
 
 ```bash
-loopless trace < trace.jsonl
-loopless replay trace.json
-loopless inspect trace.json
-loopless visualize trace.json  # ASCII timeline
+deadband trace < trace.jsonl
+deadband replay trace.json
+deadband inspect trace.json
+deadband visualize trace.json  # ASCII timeline
 ```
 
 ## Framework Integrations
 
 | Framework | Integration |
 |-----------|-------------|
-| **LangGraph** | `LooplessLangGraphMiddleware` wraps tool nodes |
-| **CrewAI** | `LooplessCrewAIFlow` flow subclass with automatic protection |
-| **OpenAI Agents SDK** | `LooplessOpenAIToolWrapper` for tool interception |
+| **LangGraph** | `DeadbandLangGraphMiddleware` wraps tool nodes |
+| **CrewAI** | `DeadbandCrewAIFlow` flow subclass with automatic protection |
+| **OpenAI Agents SDK** | `DeadbandOpenAIToolWrapper` for tool interception |
 
-## CLI
+## Deadband Proxy
+
+Deadband includes an HTTP proxy that intercepts API calls from AI coding tools and protects them from loops — no code changes needed.
+
+### Quick Start
 
 ```bash
-loopless doctor      # Health check — validates config, checks sidecar
-loopless trace       # Start tracing from stdin (JSON lines)
-loopless replay      # Replay a saved trace file
-loopless inspect     # Detailed view of a trace
-loopless visualize   # ASCII timeline visualization
-loopless init        # Generate default loopless.yaml
+# Build and enable
+cargo build -p deadband-proxy
+deadband enable
+
+# Auto-discovers and configures Aider, Claude Code, Cursor, and more
+# Starts the proxy on port 4399
+# Detects loops and injects intervention prompts
 ```
+
+### Proxy CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `deadband enable [--persistent]` | Auto-configure tools and start proxy |
+| `deadband disable` | Restore configs and stop proxy |
+| `deadband status` | Show proxy status and loop statistics |
+| `deadband logs [--tail N] [--follow]` | View proxy logs |
+| `deadband monitor` | Live TUI monitoring dashboard |
+| `deadband set [--port N] [--config PATH]` | Change proxy settings |
+| `deadband proxy [--port N] [--daemon]` | Start proxy server directly |
+
+### Proxy Architecture
+
+```
+┌─────────────────────────────────────────────┐
+│    AI Tool (Aider, Claude Code, Cursor…)    │
+└──────────────────────┬──────────────────────┘
+                       │  HTTP → localhost:4399
+┌──────────────────────▼──────────────────────┐
+│         DEADBAND PROXY                      │
+│                                             │
+│  Parse request (OpenAI or Anthropic)        │
+│  → SSE buffer (first 5 chunks)             │
+│  → Run detection (Exact, Semantic, Rules)  │
+│  → Apply intervention if loop detected     │
+│  → Forward/replay modified stream          │
+└──────────────────────┬──────────────────────┘
+                       │  HTTP → api.openai.com or api.anthropic.com
+┌──────────────────────▼──────────────────────┐
+│           LLM API (Upstream)                │
+└─────────────────────────────────────────────┘
+```
+
+**Supported endpoints:**
+- `POST /v1/chat/completions` — OpenAI-compatible (streaming + non-streaming)
+- `POST /v1/messages` — Anthropic-compatible (streaming + non-streaming)
+
+**Detection layers active through the proxy:**
+- Exact repeat detection (460ns)
+- Rule-based detection (argument validation)
+- History-based error pattern detection
+- Budget-based call count limits
+- Semantic detection (via optional sidecar)
+
+### Tool Auto-Discovery
+
+`deadband enable` automatically discovers and configures:
+
+| Tool | Discovery Path |
+|------|---------------|
+| **Aider** | `.aider.conf.yml` in project or home |
+| **Claude Code** | `~/.claude/settings.json` |
+| **Cursor** | `~/.config/Cursor/User/settings.json` |
+| **Continue** | `~/.continue/config.json` |
+| **GitHub Copilot CLI** | Binary detection in PATH |
+
+Configs are backed up to `~/.deadband/backups/` before modification.
+
+### Persistence
+
+```bash
+# Install as system service (starts on boot)
+deadband enable --persistent
+```
+
+Supports:
+- **macOS**: launchd (`~/Library/LaunchAgents/com.deadband.proxy.plist`)
+- **Linux**: systemd (`/etc/systemd/system/deadband-proxy.service`)
+- **Windows**: Planned
 
 ## Performance
 
@@ -161,15 +237,16 @@ loopless init        # Generate default loopless.yaml
 | Exact repeat detection | ~460ns (Microloop-backed) |
 | Semantic detection | ~10ms (with sidecar) |
 | Full pipeline | < 5ms per event |
+| Proxy latency (streaming) | < 50ms added |
 | Memory | < 150MB (with semantic sidecar) |
 
 ## Python API
 
 ```python
-from loopless import Orchestrator, canonicalize_args
+from deadband import Orchestrator, canonicalize_args
 
 # Orchestrator — main entry point
-orch = Orchestrator("loopless.yaml")
+orch = Orchestrator("deadband.yaml")
 intervention = orch.process("session-1", 0, "search", '{"q": "hello"}')
 metrics = orch.metrics
 print(metrics.intervention_count, metrics.prevented_calls)
@@ -182,3 +259,20 @@ cleaned = canonicalize_args('{"query": "x", "ts": 123}', ["ts"])
 ## Documentation
 
 See [PRD.md](./PRD.md) for the full product requirements.
+
+## Project Structure
+
+```
+deadband/
+├── Cargo.toml                     (workspace root)
+├── crates/
+│   ├── deadband-core/             (orchestrator, policy, intervention)
+│   ├── deadband-observation/      (detection, events, pipeline)
+│   ├── deadband-proxy/            (HTTP proxy, CLI, tool discovery)
+│   ├── deadband-adapter-langgraph/
+│   ├── deadband-adapter-crewai/
+│   └── deadband-adapter-openai/
+├── cli/                           (legacy CLI — use deadband-proxy)
+├── python/deadband/               (PyO3 Python bindings)
+└── okf/                           (Open Knowledge Format docs)
+```

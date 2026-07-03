@@ -1,18 +1,20 @@
 [package]
-name = "loopless-cli"
+name = "deadband-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Loopless CLI — doctor, trace, replay, inspect"
 
 [[bin]]
-name = "loopless"
+name = "deadband-legacy"
 path = "src/main.rs"
 
 [dependencies]
-loopless-core = { path = "../crates/loopless-core" }
+deadband-core = { path = "../crates/deadband-core" }
 clap = { version = "4", features = ["derive"] }
 serde_json.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 reqwest = { version = "0.12", features = ["blocking"] }
+ratatui = "0.29"
+crossterm = "0.28"

@@ -1,0 +1,37 @@
+[package]
+name = "deadband-proxy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Deadband Proxy — HTTP proxy that protects AI agents from loops"
+
+[[bin]]
+name = "deadband"
+path = "src/main.rs"
+
+[dependencies]
+deadband-core = { path = "../deadband-core" }
+deadband-observation = { path = "../deadband-observation" }
+
+clap = { version = "4", features = ["derive"] }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+anyhow.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+reqwest = { version = "0.12", features = ["json", "stream"] }
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+http-body = "1"
+bytes = "1"
+futures-util = "0.3"
+pin-project = "1"
+dirs = "5"
+ratatui = "0.29"
+crossterm = "0.28"

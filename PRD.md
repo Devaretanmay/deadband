@@ -1,4 +1,4 @@
-# Loopless — Product Requirements Document (PRD)
+# Deadband — Product Requirements Document (PRD)
 
 **Version:** 1.0
 **Date:** July 2, 2026
@@ -10,11 +10,11 @@
 
 ### 1.1 Product Vision
 
-**Loopless is an execution runtime that sits between AI agents and their tools, continuously deciding whether execution should continue, adapt, or stop.**
+**Deadband is an execution runtime that sits between AI agents and their tools, continuously deciding whether execution should continue, adapt, or stop.**
 
 Current AI agents are stateless. They don't remember how they fail. They can't update their own behavior. They loop, drift, and burn money — often undetected until the bill arrives. A single 24-hour agent loop can cost **$4,000+**. One documented case cost a team **$47,000** from an 11-day undetected loop.
 
-Loopless solves this by providing a lightweight, local-first, sub-millisecond execution runtime that observes every tool call, detects failures, and intervenes before execution spirals out of control.
+Deadband solves this by providing a lightweight, local-first, sub-millisecond execution runtime that observes every tool call, detects failures, and intervenes before execution spirals out of control.
 
 ### 1.2 Product Mission
 
@@ -32,12 +32,12 @@ Loopless solves this by providing a lightweight, local-first, sub-millisecond ex
 
 ### 1.4 The Solution
 
-**Loopless = Event-driven execution runtime with intervention capabilities**
+**Deadband = Event-driven execution runtime with intervention capabilities**
 
 | Component | What It Does |
 |-----------|--------------|
 | **Microloop** | Detects what happened (events, detection, semantic analysis) |
-| **Loopless** | Decides what to do about it (policies, interventions, orchestration) |
+| **Deadband** | Decides what to do about it (policies, interventions, orchestration) |
 | **Adapters** | Integrates with LangGraph, CrewAI, OpenAI Agents SDK |
 | **CLI** | Doctor, trace, replay, inspect |
 | **Replay** | Full execution replay for debugging |
@@ -183,7 +183,7 @@ LOOPLESS = "What should we do?"
   - CLI
 ```
 
-**Microloop never depends on Loopless.** Loopless depends on Microloop.
+**Microloop never depends on Deadband.** Deadband depends on Microloop.
 
 ---
 
@@ -245,7 +245,7 @@ LOOPLESS = "What should we do?"
 
 **Feature: Shadow Mode for Semantic Sidecar**
 
-**Description:** When the semantic sidecar is unreachable, Loopless gracefully degrades: logs a warning, falls back to exact detection only, and tracks shadow metrics (unavailability count, shadow mode active) so users can measure the impact of running without the sidecar.
+**Description:** When the semantic sidecar is unreachable, Deadband gracefully degrades: logs a warning, falls back to exact detection only, and tracks shadow metrics (unavailability count, shadow mode active) so users can measure the impact of running without the sidecar.
 
 **Implementation:** `SemanticSidecarClient` wraps `SidecarShadowMetrics` in a `Mutex` for interior mutability. On sidecar error: `tracing::warn!` logged, `sidecar_unavailable_count` incremented, `Detect()` returns `None` (exact-only fallback). On recovery: `tracing::info!` logged, metrics reset. Exposed via `SemanticDetector.shadow_metrics()` and `is_shadow_mode()`.
 
@@ -337,17 +337,17 @@ LOOPLESS = "What should we do?"
 
 ### 4.7 Feature: Framework Adapters
 
-**Description:** Integrate Loopless with LangGraph, CrewAI, and OpenAI Agents SDK.
+**Description:** Integrate Deadband with LangGraph, CrewAI, and OpenAI Agents SDK.
 
 **User Stories:**
-- As a LangGraph user, I want to add Loopless as middleware so I don't need to change my existing code.
-- As a CrewAI user, I want to inherit from LooplessCrewAIFlow so I get automatic protection.
+- As a LangGraph user, I want to add Deadband as middleware so I don't need to change my existing code.
+- As a CrewAI user, I want to inherit from DeadbandCrewAIFlow so I get automatic protection.
 - As an OpenAI Agents user, I want to wrap my tools so I get interception.
 
 **Acceptance Criteria:**
-- [ ] `LooplessLangGraphMiddleware` with wrap_tool_node()
-- [ ] `LooplessCrewAIFlow` with method wrapping
-- [ ] `LooplessOpenAIAgentsMiddleware` with tool wrapping
+- [ ] `DeadbandLangGraphMiddleware` with wrap_tool_node()
+- [ ] `DeadbandCrewAIFlow` with method wrapping
+- [ ] `DeadbandOpenAIAgentsMiddleware` with tool wrapping
 - [ ] Thread-safe orchestrator instance
 - [ ] Examples for each framework
 
@@ -373,20 +373,20 @@ LOOPLESS = "What should we do?"
 
 ### 4.9 Feature: CLI
 
-**Description:** Command-line interface for Loopless operations.
+**Description:** Command-line interface for Deadband operations.
 
 **User Stories:**
-- As a developer, I want to check if Loopless is working so I know my setup is correct.
+- As a developer, I want to check if Deadband is working so I know my setup is correct.
 - As a developer, I want to trace an execution so I can see what's happening.
 - As a developer, I want to replay a trace so I can debug issues.
 - As a developer, I want to inspect a trace in detail so I can understand the timeline.
 
 **Acceptance Criteria:**
-- [ ] `loopless doctor` — health check
-- [ ] `loopless trace` — start tracing
-- [ ] `loopless replay trace.json` — replay a trace
-- [ ] `loopless inspect trace.json` — detailed view
-- [ ] `loopless visualize trace.json` — ASCII timeline
+- [ ] `deadband doctor` — health check
+- [ ] `deadband trace` — start tracing
+- [ ] `deadband replay trace.json` — replay a trace
+- [ ] `deadband inspect trace.json` — detailed view
+- [ ] `deadband visualize trace.json` — ASCII timeline
 - [ ] Colored output
 - [ ] CLI help and documentation
 
@@ -418,34 +418,34 @@ LOOPLESS = "What should we do?"
 
 | ID | Story | Priority |
 |----|-------|----------|
-| US-1 | As a developer, I want to install Loopless with `pip install loopless` so I can get started quickly. | P0 |
-| US-2 | As a developer, I want to configure Loopless with a YAML file so I can define policies without code. | P1 |
-| US-3 | As a developer, I want Loopless to intervene when a loop is detected so I don't burn API credits. | P0 |
-| US-4 | As a developer, I want to see what Loopless did so I can verify it worked. | P1 |
+| US-1 | As a developer, I want to install Deadband with `pip install deadband` so I can get started quickly. | P0 |
+| US-2 | As a developer, I want to configure Deadband with a YAML file so I can define policies without code. | P1 |
+| US-3 | As a developer, I want Deadband to intervene when a loop is detected so I don't burn API credits. | P0 |
+| US-4 | As a developer, I want to see what Deadband did so I can verify it worked. | P1 |
 | US-5 | As a developer, I want to replay execution traces so I can debug issues. | P1 |
 
 ### 5.2 Developer — Framework Integration
 
 | ID | Story | Priority |
 |----|-------|----------|
-| US-6 | As a LangGraph user, I want to add Loopless middleware so I don't change my existing code. | P1 |
-| US-7 | As a CrewAI user, I want to inherit LooplessCrewAIFlow so I get automatic protection. | P1 |
+| US-6 | As a LangGraph user, I want to add Deadband middleware so I don't change my existing code. | P1 |
+| US-7 | As a CrewAI user, I want to inherit DeadbandCrewAIFlow so I get automatic protection. | P1 |
 | US-8 | As an OpenAI Agents user, I want to wrap my tools so I get interception. | P1 |
 
 ### 5.3 Developer — CLI
 
 | ID | Story | Priority |
 |----|-------|----------|
-| US-9 | As a developer, I want to run `loopless doctor` so I can check my setup. | P2 |
-| US-10 | As a developer, I want to run `loopless trace` so I can see execution flow. | P2 |
-| US-11 | As a developer, I want to run `loopless replay trace.json` so I can debug. | P2 |
-| US-12 | As a developer, I want to run `loopless inspect trace.json` so I can see details. | P2 |
+| US-9 | As a developer, I want to run `deadband doctor` so I can check my setup. | P2 |
+| US-10 | As a developer, I want to run `deadband trace` so I can see execution flow. | P2 |
+| US-11 | As a developer, I want to run `deadband replay trace.json` so I can debug. | P2 |
+| US-12 | As a developer, I want to run `deadband inspect trace.json` so I can see details. | P2 |
 
 ### 5.4 Developer — Customization
 
 | ID | Story | Priority |
 |----|-------|----------|
-| US-13 | As a developer, I want to write custom detectors so I can extend Loopless. | P2 |
+| US-13 | As a developer, I want to write custom detectors so I can extend Deadband. | P2 |
 | US-14 | As a developer, I want to write custom policies so I can define custom recovery behavior. | P2 |
 | US-15 | As a developer, I want to create custom framework adapters so I can integrate with my stack. | P3 |
 
@@ -513,9 +513,9 @@ LOOPLESS = "What should we do?"
 
 | Component | Dependency |
 |-----------|------------|
-| Loopless | Microloop (crate) |
-| Loopless Python | Loopless Rust (PyO3) |
-| Framework Adapters | Loopless Python |
+| Deadband | Microloop (crate) |
+| Deadband Python | Deadband Rust (PyO3) |
+| Framework Adapters | Deadband Python |
 
 ---
 
@@ -537,7 +537,7 @@ LOOPLESS = "What should we do?"
 | Epic 4 | Intervention Protocol | 2 |
 | Epic 5 | Orchestrator | 3 |
 | Epic 6 | Policy Engine | 2 |
-| **Milestone** | Loopless core complete | **7 days** |
+| **Milestone** | Deadband core complete | **7 days** |
 
 ### 8.3 Phase 2: Framework Integration (Week 4-5)
 
@@ -583,7 +583,7 @@ LOOPLESS = "What should we do?"
 
 ### 9.2 Adoption Success
 
-- [ ] 10+ developers using Loopless
+- [ ] 10+ developers using Deadband
 - [ ] 100+ GitHub stars
 - [ ] 5+ issues opened (indicates usage)
 - [ ] 1+ community contribution
@@ -652,8 +652,8 @@ LOOPLESS = "What should we do?"
 1. Agent calls `get_revenue()` -> timeout
 2. Agent calls `get_revenue()` -> timeout
 3. Agent calls `get_revenue()` -> timeout
-4. **Loopless detects 3 repeats**
-5. **Loopless injects prompt:** "Database is down. Use cached summary."
+4. **Deadband detects 3 repeats**
+5. **Deadband injects prompt:** "Database is down. Use cached summary."
 6. Agent calls `get_cached_revenue()` -> success
 7. **Recovered in 84ms, 14 tool calls prevented**
 
@@ -662,15 +662,15 @@ LOOPLESS = "What should we do?"
 1. Agent calls `delete_line(5)` -> fails (permission)
 2. Agent calls `remove_line(5)` -> fails (permission)
 3. Agent calls `erase_line(5)` -> fails (permission)
-4. **Loopless detects semantic drift > 0.85**
-5. **Loopless injects prompt:** "You don't have permission to delete. Try commenting out instead."
+4. **Deadband detects semantic drift > 0.85**
+5. **Deadband injects prompt:** "You don't have permission to delete. Try commenting out instead."
 6. Agent calls `comment_line(5)` -> success
 7. **Recovered, tool call avoided**
 
 ### B. Example Configuration
 
 ```yaml
-# loopless.yaml
+# deadband.yaml
 policies:
   - name: "hard_fork_on_repeats"
     when:
