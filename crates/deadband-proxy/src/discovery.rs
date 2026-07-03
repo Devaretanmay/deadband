@@ -208,9 +208,12 @@ impl ToolDiscovery {
         if tool.config_path.exists() {
             std::fs::create_dir_all(&self.backups_dir)
                 .with_context(|| format!("Failed to create backups dir: {:?}", self.backups_dir))?;
-            std::fs::copy(&tool.config_path, &tool.backup_path)
+            let now = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
+            let backup_name = format!("{}.{}", tool.config_path.file_name().unwrap_or_default().to_str().unwrap_or("unknown"), now);
+            let backup_path = self.backups_dir.join(&backup_name);
+            std::fs::copy(&tool.config_path, &backup_path)
                 .with_context(|| format!("Failed to backup config: {:?}", tool.config_path))?;
-            tracing::info!("Backed up {} to {:?}", tool.name, tool.backup_path);
+            tracing::info!("Backed up {} to {:?}", tool.name, backup_path);
         }
 
         match tool.name.as_str() {
@@ -284,25 +287,30 @@ impl ToolDiscovery {
         let mut config: serde_json::Value = serde_json::from_str(&content)
             .with_context(|| format!("Failed to parse OpenCode config: {}", tool.config_path.display()))?;
 
-
+        let mut mapping = std::collections::HashMap::new();
 
         if let Some(providers) = config.get_mut("provider").and_then(|p| p.as_object_mut()) {
-            for (_name, provider) in providers.iter_mut() {
+            for (name, provider) in providers.iter_mut() {
                 if let Some(options) = provider.get_mut("options").and_then(|o| o.as_object_mut()) {
-                    if let Some(base_url) = options.get_mut("baseURL") {
-
-                        let original_url = base_url.as_str().unwrap_or("").to_string();
-
-                        if !original_url.is_empty() && original_url != self.proxy_url() && !original_url.contains("localhost:4399") {
-                            let upstream_path = crate::config::ProxyConfig::data_dir().join("upstream_url.txt");
-                            let _ = std::fs::write(&upstream_path, &original_url);
+                    match options.get_mut("baseURL") {
+                        Some(base_url) => {
+                            let original_url = base_url.as_str().unwrap_or("").to_string();
+                            if !original_url.is_empty() && original_url != self.proxy_url() && !original_url.contains("localhost:4399") {
+                                mapping.insert(name.clone(), original_url);
+                            }
+                            *base_url = serde_json::Value::String(self.proxy_url());
                         }
-
-                        *base_url = serde_json::Value::String(self.proxy_url());
+                        None => {
+                            options.insert("baseURL".to_string(), serde_json::Value::String(self.proxy_url()));
+                        }
                     }
                 }
             }
         }
+
+        let mapping_path = crate::config::ProxyConfig::data_dir().join("upstream_mapping.json");
+        std::fs::create_dir_all(mapping_path.parent().unwrap_or(&crate::config::ProxyConfig::data_dir())).ok();
+        let _ = std::fs::write(&mapping_path, serde_json::to_string_pretty(&mapping).unwrap_or_default());
 
         let new_content = serde_json::to_string_pretty(&config)?;
         std::fs::write(&tool.config_path, new_content)

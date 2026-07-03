@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -23,6 +24,10 @@ pub struct ProxyConfig {
     pub backups_dir: PathBuf,
 
     pub sse_buffer_size: usize,
+
+    pub watch_dir: Option<PathBuf>,
+
+    pub upstream_mapping: HashMap<String, String>,
 }
 
 impl Default for ProxyConfig {
@@ -41,6 +46,8 @@ impl Default for ProxyConfig {
             backups_dir: data_dir.join("backups"),
             data_dir,
             sse_buffer_size: 5,
+            watch_dir: None,
+            upstream_mapping: HashMap::new(),
         }
     }
 }

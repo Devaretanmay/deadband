@@ -121,9 +121,14 @@ pub fn parse_request(body: &str, path: &str, _headers: &[(String, String)]) -> R
 }
 
 pub fn build_upstream_body(request: &ApiRequest, intervention_content: Option<&str>) -> Value {
+    let strip_provider = |model: &str| -> String {
+        model.split_once('/').map(|(_, rest)| rest).unwrap_or(model).to_string()
+    };
+
     match request {
-        ApiRequest::OpenAI { raw, .. } => {
+        ApiRequest::OpenAI { model, raw, .. } => {
             let mut body = raw.clone();
+            body["model"] = serde_json::Value::String(strip_provider(model));
             if let Some(content) = intervention_content {
 
                 if let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) {
@@ -136,8 +141,9 @@ pub fn build_upstream_body(request: &ApiRequest, intervention_content: Option<&s
             }
             body
         }
-        ApiRequest::Anthropic { raw, .. } => {
+        ApiRequest::Anthropic { model, raw, .. } => {
             let mut body = raw.clone();
+            body["model"] = serde_json::Value::String(strip_provider(model));
             if let Some(content) = intervention_content {
                 if let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) {
                     let system_msg = serde_json::json!({

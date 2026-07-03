@@ -1,5 +1,7 @@
 
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
@@ -8,7 +10,6 @@ use http_body_util::{BodyExt, Full, StreamBody};
 use hyper::body::Frame;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
-use std::sync::Mutex;
 
 use deadband_core::{Orchestrator, OrchestratorConfig};
 
@@ -40,14 +41,11 @@ impl ProxyState {
             .with_context(|| format!("Failed to create backups dir: {:?}", config.backups_dir))?;
 
 
-        let upstream_path = crate::config::ProxyConfig::data_dir().join("upstream_url.txt");
-        if let Ok(url) = tokio::fs::read_to_string(&upstream_path).await {
-            let url = url.trim().to_string();
-            if !url.is_empty() && config.openai_base_url.is_none() {
-
-                let base = url.strip_suffix("/v1").unwrap_or(&url).to_string();
-                config.openai_base_url = Some(base);
-                tracing::info!("Auto-configured upstream from tool discovery: {}", url);
+        let mapping_path = crate::config::ProxyConfig::data_dir().join("upstream_mapping.json");
+        if let Ok(json) = tokio::fs::read_to_string(&mapping_path).await {
+            if let Ok(mapping) = serde_json::from_str::<HashMap<String, String>>(&json) {
+                config.upstream_mapping = mapping;
+                tracing::info!("Loaded upstream mapping from tool discovery");
             }
         }
 
@@ -132,6 +130,14 @@ pub async fn run_proxy(state: Arc<ProxyState>) -> Result<()> {
     let port = state.config.port;
     let actual_port = find_available_port(port).await
         .with_context(|| format!("No available port found starting from {}", port))?;
+
+    if let Some(ref watch_dir) = state.config.watch_dir {
+        let wd = watch_dir.clone();
+        let ws = state.clone();
+        let step = Arc::new(std::sync::atomic::AtomicU64::new(1));
+        tokio::spawn(crate::watchdog::run_watchdog(ws, wd, step));
+        tracing::info!("Watchdog monitoring {:?}", watch_dir);
+    }
 
     let addr = format!("0.0.0.0:{}", actual_port);
 
@@ -278,6 +284,20 @@ fn determine_upstream_url(
     request: &crate::request::ApiRequest,
     config: &ProxyConfig,
 ) -> String {
+    let model = match request {
+        crate::request::ApiRequest::OpenAI { model, .. } => model,
+        crate::request::ApiRequest::Anthropic { model, .. } => model,
+    };
+
+    // Extract provider prefix from model name (e.g., "ollama/ornith:9b" → "ollama")
+    let provider = model.split('/').next().unwrap_or("");
+    if !provider.is_empty() {
+        if let Some(url) = config.upstream_mapping.get(provider) {
+            return url.trim_end_matches("/v1").to_string();
+        }
+    }
+
+    // Fallback to the old single-url behavior
     match request {
         crate::request::ApiRequest::OpenAI { .. } => {
             config.openai_base_url.clone().unwrap_or_else(|| "https://api.openai.com".to_string())

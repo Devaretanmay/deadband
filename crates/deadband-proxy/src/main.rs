@@ -31,6 +31,9 @@ enum Commands {
 
         #[arg(long)]
         recover: bool,
+
+        #[arg(long)]
+        watch: Option<PathBuf>,
     },
 
     Disable,
@@ -74,6 +77,9 @@ enum Commands {
 
         #[arg(long)]
         recover: bool,
+
+        #[arg(long)]
+        watch: Option<PathBuf>,
     },
 }
 
@@ -90,21 +96,21 @@ async fn main() -> Result<(), anyhow::Error> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Enable { persistent, port, config, recover } => {
-            cmd_enable(persistent, port, config, recover).await?
+        Commands::Enable { persistent, port, config, recover, watch } => {
+            cmd_enable(persistent, port, config, recover, watch).await?
         }
         Commands::Disable => cmd_disable().await?,
         Commands::Status => cmd_status().await?,
         Commands::Logs { tail, follow } => cmd_logs(tail, follow)?,
         Commands::Monitor { port } => cmd_monitor(port).await?,
         Commands::Set { port, config } => cmd_set(port, config).await?,
-        Commands::Proxy { port, config, daemon, recover } => cmd_proxy(port, config, daemon, recover).await?,
+        Commands::Proxy { port, config, daemon, recover, watch } => cmd_proxy(port, config, daemon, recover, watch).await?,
     }
 
     Ok(())
 }
 
-async fn cmd_enable(persistent: bool, port: u16, config: PathBuf, recover: bool) -> Result<(), anyhow::Error> {
+async fn cmd_enable(persistent: bool, port: u16, config: PathBuf, recover: bool, watch: Option<PathBuf>) -> Result<(), anyhow::Error> {
     println!(" Deadband Proxy — Enable");
     println!("============================");
 
@@ -129,6 +135,7 @@ async fn cmd_enable(persistent: bool, port: u16, config: PathBuf, recover: bool)
         policy_path: config,
         persistent,
         recover,
+        watch_dir: watch,
         ..Default::default()
     };
     let state = ProxyState::new(pconfig).await?;
@@ -321,7 +328,7 @@ async fn cmd_set(
     Ok(())
 }
 
-async fn cmd_proxy(port: u16, config: PathBuf, daemon: bool, recover: bool) -> Result<(), anyhow::Error> {
+async fn cmd_proxy(port: u16, config: PathBuf, daemon: bool, recover: bool, watch: Option<PathBuf>) -> Result<(), anyhow::Error> {
     if daemon {
 
         let log_dir = ProxyConfig::log_dir();
@@ -333,6 +340,7 @@ async fn cmd_proxy(port: u16, config: PathBuf, daemon: bool, recover: bool) -> R
         port,
         policy_path: config,
         recover,
+        watch_dir: watch,
         ..Default::default()
     };
 
