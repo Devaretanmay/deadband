@@ -148,7 +148,7 @@ struct PyDetectionReport {
 fn canonicalize_args(args_json: &str, volatile_fields: &Bound<'_, PyList>) -> String {
     let fields: Vec<String> = volatile_fields
         .iter()
-        .filter_map(|f| f.extract::<String>().ok())
+        .filter_map(|f| unsafe { f.extract::<String>().ok() })
         .collect();
     deadband_core::canonicalize_args(args_json, &fields)
 }
