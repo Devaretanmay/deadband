@@ -1,9 +1,8 @@
 policies:
   - name: "hard_fork_on_repeats"
     when:
-      type: "RepeatCount"
-      params:
-        threshold: 3
+      count:
+        ExactRepeat: 3
     do:
       type: "InjectPrompt"
       params:
@@ -12,10 +11,8 @@ policies:
 
   - name: "retry_timeout"
     when:
-      type: "ErrorType"
-      params:
-        kind: "Timeout"
-        threshold: 1
+      count:
+        ErrorPattern: 1
     do:
       type: "Retry"
       params:
@@ -23,9 +20,8 @@ policies:
 
   - name: "semantic_nudge"
     when:
-      type: "SemanticDrift"
-      params:
-        threshold: 0.85
+      any:
+        - SemanticRepeat
     do:
       type: "InjectPrompt"
       params:
@@ -34,9 +30,8 @@ policies:
 
   - name: "abort_on_budget"
     when:
-      type: "RepeatCount"
-      params:
-        threshold: 10
+      count:
+        ExactRepeat: 10
     do:
       type: "Abort"
       params:
@@ -44,10 +39,8 @@ policies:
 
   - name: "backoff_on_rate_limit"
     when:
-      type: "ErrorType"
-      params:
-        kind: "RateLimit"
-        threshold: 1
+      count:
+        ErrorPattern: 1
     do:
       type: "Backoff"
       params:
