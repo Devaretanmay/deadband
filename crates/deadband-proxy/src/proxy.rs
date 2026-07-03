@@ -71,18 +71,41 @@ impl ProxyState {
         })
     }
 
-    pub fn update_stats(&self, loops: u64, interventions: u64, prevented: u64) {
-        let mut stats = self.stats.lock().unwrap();
-        stats.total_requests += 1;
-        stats.loops_detected += loops;
-        stats.interventions_applied += interventions;
-        stats.calls_prevented += prevented;
-        stats.estimated_savings = stats.calls_prevented as f64 * 0.002;
-        stats.status = "running".to_string();
-        // Persist to disk for `deadband status` to read
-        let stats_path = crate::config::ProxyConfig::data_dir().join("stats.json");
-        if let Ok(json) = serde_json::to_string_pretty(&*stats) {
-            let _ = std::fs::write(&stats_path, json);
+    /// Record a request and (optionally) detected loops.
+    /// Stats are persisted to disk after every call so `deadband status`
+    /// can read them even if the proxy is interrupted.
+    pub fn record_request(&self, loops: u64, interventions: u64, prevented: u64) {
+        {
+            let mut stats = self.stats.lock().unwrap();
+            stats.total_requests += 1;
+            stats.loops_detected += loops;
+            stats.interventions_applied += interventions;
+            stats.calls_prevented += prevented;
+            stats.estimated_savings = stats.calls_prevented as f64 * 0.002;
+            stats.status = "running".to_string();
+        }
+        self.persist_stats();
+    }
+
+    /// Persist current stats to `~/.deadband/stats.json`.
+    /// Creates the directory if it doesn't exist.
+    fn persist_stats(&self) {
+        let data_dir = crate::config::ProxyConfig::data_dir();
+        if let Err(e) = std::fs::create_dir_all(&data_dir) {
+            tracing::warn!("Failed to create stats directory {:?}: {}", data_dir, e);
+            return;
+        }
+        let stats_path = data_dir.join("stats.json");
+        let stats = self.stats.lock().unwrap();
+        match serde_json::to_string_pretty(&*stats) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(&stats_path, json) {
+                    tracing::warn!("Failed to write stats to {:?}: {}", stats_path, e);
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to serialize stats: {}", e);
+            }
         }
     }
 }
@@ -306,9 +329,12 @@ async fn handle_non_streaming_response(
         body.to_vec()
     };
 
-    if intervention_content.is_some() {
-        state.update_stats(1, 1, 1);
+    let had_intervention = intervention_content.is_some();
+    if had_intervention {
+        state.record_request(1, 1, 1);
         tracing::info!("Non-streaming intervention applied");
+    } else {
+        state.record_request(0, 0, 0);
     }
 
     Ok(builder.body(Full::from(Bytes::from(final_body)).boxed()).unwrap())
@@ -357,7 +383,7 @@ async fn handle_streaming_response(
 
                     if sse_proc.has_intervention() && !has_intervened {
                         has_intervened = true;
-                        state_clone.update_stats(1, 1, 1);
+                        state_clone.record_request(1, 1, 1);
                         tracing::info!("Streaming intervention applied");
                     }
 
@@ -374,19 +400,26 @@ async fn handle_streaming_response(
         }
 
         // Flush remaining buffered chunks when upstream stream ends
-        let flush_data: Vec<Bytes> = {
+        let (flush_data, had_any_intervention) = {
             let mut orch = state_clone.orchestrator.lock().unwrap();
+            let had = sse_proc.has_intervention();
             let mut data = Vec::new();
             while let Some(chunk) = sse_proc.flush(Some(&mut orch), "proxy") {
                 data.push(chunk);
             }
-            data
+            (data, has_intervened || had)
         };
 
         for data in flush_data {
             if tx.send(Ok(Frame::data(data))).await.is_err() {
                 break;
             }
+        }
+
+        // Ensure stats are recorded even if no intervention was found
+        // (e.g. the request completed without triggering any loop)
+        if !had_any_intervention {
+            state_clone.record_request(0, 0, 0);
         }
     });
 
